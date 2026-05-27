@@ -73,7 +73,7 @@ from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
 from ariel.simulation.controllers import NaCPG
 from ariel.simulation.controllers.controller import Controller
 from ariel.simulation.controllers.na_cpg import create_fully_connected_adjacency
-from ariel.simulation.environments import SimpleFlatWorld
+from ariel.simulation.environments import SimpleFlatWorldWalled
 from ariel.simulation.tasks.exploration import (
     GridSpec,
     visit_counts_from_xy,
@@ -121,9 +121,9 @@ GRID = GridSpec(width_m=10.0, height_m=10.0, nrow=10, ncol=10, origin_xy=(0.0, 0
 # ---------------------------------------------------------------------------
 # World / model helpers
 # ---------------------------------------------------------------------------
-def _build_world() -> tuple[SimpleFlatWorld, mujoco.MjModel, mujoco.MjData]:
+def _build_world() -> tuple[SimpleFlatWorldWalled, mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
-    world = SimpleFlatWorld(load_precompiled=False)
+    world = SimpleFlatWorldWalled(load_precompiled=False)
     world.spawn(gecko().spec, position=[0.0, 0.0, 0.1])
     model = cast(mujoco.MjModel, world.spec.compile())
     data = mujoco.MjData(model)
