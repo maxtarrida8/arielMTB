@@ -37,6 +37,7 @@ from ariel.simulation.tasks.exploration import (
     fitness_f3_unique_cells_per_step,
     fitness_f4_unknown_area_reduction,
     fitness_f6_coverage_integral,
+    fitness_f7_coverage_efficiency,
 )
 from ariel.simulation.tasks.exploration_locomotion import (
     fitness_f1_plus_forward,
@@ -84,6 +85,10 @@ def _f6(
     **_: Any,
 ) -> float:
     return float(fitness_f6_coverage_integral(xy, grid))
+
+
+def _f7(N: np.ndarray, **_: Any) -> float:
+    return float(fitness_f7_coverage_efficiency(N, alpha=0.5))
 
 
 def _f1_plus_forward(
@@ -183,6 +188,11 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         needs_N=False,
         needs_xy=True,
         needs_grid=True,
+    ),
+    "f7": FitnessSpec(
+        name="f7",
+        description="Coverage + efficiency: 0.5 * cov(T) + 0.5 * E(T). No forward bias.",
+        func=_f7,
     ),
     "f1_plus_forward": FitnessSpec(
         name="f1_plus_forward",

@@ -360,3 +360,29 @@ def fitness_f6_coverage_integral(
     """f6 ≈ (1/K) * sum_k cov(t_k)."""
     return coverage_integral(xy, grid, sample_every=sample_every)
 
+
+def fitness_f7_coverage_efficiency(
+    N: np.ndarray,
+    *,
+    alpha: float = 0.5,
+) -> float:
+    """f7 = alpha * cov(T) + (1 - alpha) * E(T).
+
+    A parameter-free combination of coverage (f1) and path efficiency (f3)
+    that rewards both visiting many cells *and* doing so without redundant
+    revisits.  Unlike the ``scalarized`` fitness there is no forward-
+    displacement term, so no preferred direction is imposed on the robot.
+
+    Parameters
+    ----------
+    N : np.ndarray
+        Cell visit-count grid (shape nrow × ncol).
+    alpha : float
+        Weight on coverage fraction (default 0.5).
+        ``(1 - alpha)`` is applied to path efficiency.
+        Both components are in [0, 1], so f7 is also in [0, 1].
+    """
+    cov = coverage_fraction(N)
+    eff = path_efficiency(N)
+    return float(alpha * cov + (1.0 - alpha) * eff)
+
