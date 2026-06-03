@@ -409,7 +409,7 @@ class NaCPG(nn.Module):
                 self.xy[i] = torch.tensor([xi_new, yi_new])
 
                 # Save the angles (results)
-                angles[i] = self.amplitudes[i] * yi_new
+                angles[i] = self.amplitudes[i] * yi_new + self.b[i]
 
             # Apply hard bounds if requested
             if self.hard_bounds is not None:
