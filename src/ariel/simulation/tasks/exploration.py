@@ -11,6 +11,7 @@ from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
 import numpy as np
+from scipy.spatial import ConvexHull, QhullError
 
 
 @dataclass(frozen=True)
@@ -359,6 +360,58 @@ def fitness_f6_coverage_integral(
 ) -> float:
     """f6 ≈ (1/K) * sum_k cov(t_k)."""
     return coverage_integral(xy, grid, sample_every=sample_every)
+
+
+def fitness_f8_convex_hull_coverage(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f8 = convex_hull_area(trajectory) / arena_area.
+
+    Measures how broadly the robot spreads across the arena by computing the
+    area of the convex hull of its XY trajectory, normalised by the total
+    arena area so the score is in [0, 1].
+
+    This is a direct anti-circling signal: a robot that circles stays inside
+    a small hull (low score) regardless of how many steps it takes, while a
+    robot that genuinely explores corners scores near 1.
+
+    Parameters
+    ----------
+    xy : array-like of shape (T, 2)
+        XY trajectory in world coordinates.
+    grid : GridSpec
+        Used only to derive the arena area (width_m * height_m).
+
+    Returns
+    -------
+    float
+        Hull area / arena area, clamped to [0, 1].
+        Returns 0.0 if the trajectory has fewer than 3 non-collinear points.
+    """
+    arena_area = float(grid.width_m) * float(grid.height_m)
+    if arena_area <= 0.0:
+        return 0.0
+
+    arr = np.asarray(xy, dtype=float)
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        return 0.0
+    if len(arr) < 3:
+        return 0.0
+
+    # Remove duplicate points — QHull needs distinct positions
+    arr = np.unique(arr, axis=0)
+    if len(arr) < 3:
+        return 0.0
+
+    try:
+        hull = ConvexHull(arr)
+        hull_area = float(hull.volume)  # in 2D, .volume gives the area
+    except QhullError:
+        # All points collinear (robot moved in a straight line) — hull has 0 area
+        return 0.0
+
+    return float(np.clip(hull_area / arena_area, 0.0, 1.0))
 
 
 def fitness_f7_coverage_efficiency(

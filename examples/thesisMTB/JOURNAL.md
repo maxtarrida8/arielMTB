@@ -28,3 +28,20 @@
 
 **plan for tomorrow:**
 - combining f1 and f3 into a single function to promote coverage while keeping efficiency. Try different optimizers?
+
+**plan for tomorrow:**
+- ...
+
+## 2026-05-28 ##
+
+**What I did:**
+- created f7 = f1 + f3, an ran it at duration 600 budget 300. 
+- created f8, which rewards spreading by maximizing the convex hull of the robot's path. This was done in order to stop the circling behavior the previous fitness functions have resulted by making the spread out more, as this function is maximized if the robot visits the four corners of the arena. 
+- added 
+**Result:**
+- best_fitness: 
+- Behavior observed: 
+- Run dir: 
+
+**plan for tomorrow:**
+- 

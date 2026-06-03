@@ -38,6 +38,7 @@ from ariel.simulation.tasks.exploration import (
     fitness_f4_unknown_area_reduction,
     fitness_f6_coverage_integral,
     fitness_f7_coverage_efficiency,
+    fitness_f8_convex_hull_coverage,
 )
 from ariel.simulation.tasks.exploration_locomotion import (
     fitness_f1_plus_forward,
@@ -89,6 +90,14 @@ def _f6(
 
 def _f7(N: np.ndarray, **_: Any) -> float:
     return float(fitness_f7_coverage_efficiency(N, alpha=0.5))
+
+
+def _f8(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f8_convex_hull_coverage(xy, grid))
 
 
 def _f1_plus_forward(
@@ -193,6 +202,14 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         name="f7",
         description="Coverage + efficiency: 0.5 * cov(T) + 0.5 * E(T). No forward bias.",
         func=_f7,
+    ),
+    "f8": FitnessSpec(
+        name="f8",
+        description="Convex hull coverage: hull_area(trajectory) / arena_area. Direct anti-circling signal.",
+        func=_f8,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
     ),
     "f1_plus_forward": FitnessSpec(
         name="f1_plus_forward",
