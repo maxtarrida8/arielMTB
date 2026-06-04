@@ -548,3 +548,109 @@ def fitness_f14_hull_times_coverage(
     """
     return fitness_f1_pure_coverage(N) * fitness_f8_convex_hull_coverage(xy, grid)
 
+
+def fitness_f15_coverage_waypoint(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    visit_radius: float = 2.0,
+) -> float:
+    """f15 = f1 + f9.
+
+    Additive combination of cell coverage and waypoint proximity.
+    f1 provides gradient for any movement; f9 steers toward targets.
+    """
+    return float(
+        fitness_f1_pure_coverage(N)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
+    )
+
+
+def fitness_f16_weighted_coverage_waypoint(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    alpha: float = 0.5,
+    visit_radius: float = 2.0,
+) -> float:
+    """f16 = alpha * f1 + (1 - alpha) * f9.
+
+    Weighted blend of coverage and waypoint proximity, both in [0, 1].
+    """
+    return float(
+        alpha * fitness_f1_pure_coverage(N)
+        + (1.0 - alpha) * fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
+    )
+
+
+def fitness_f17_efficiency_waypoint(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    visit_radius: float = 2.0,
+) -> float:
+    """f17 = f3 + f9.
+
+    Path efficiency plus waypoint proximity.
+    Rewards reaching targets without redundant revisits.
+    """
+    return float(
+        fitness_f3_unique_cells_per_step(N)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
+    )
+
+
+def fitness_f18_unknown_waypoint(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    visit_radius: float = 2.0,
+) -> float:
+    """f18 = f4 + f9.
+
+    Unknown-area reduction plus waypoint proximity.
+    """
+    return float(
+        fitness_f4_unknown_area_reduction(N)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
+    )
+
+
+def fitness_f19_integral_waypoint(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    targets: Sequence[tuple[float, float]],
+    *,
+    visit_radius: float = 2.0,
+) -> float:
+    """f19 = f6 + f9.
+
+    Coverage integral over time plus waypoint proximity.
+    Rewards discovering cells early AND approaching targets.
+    """
+    return float(
+        fitness_f6_coverage_integral(xy, grid)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
+    )
+
+
+def fitness_f20_cov_efficiency_waypoint(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    visit_radius: float = 2.0,
+) -> float:
+    """f20 = f7 + f9.
+
+    Coverage+efficiency composite plus waypoint proximity.
+    """
+    return float(
+        fitness_f7_coverage_efficiency(N, alpha=0.5)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
+    )
+

@@ -45,6 +45,12 @@ from ariel.simulation.tasks.exploration import (
     fitness_f12_hull_integral,
     fitness_f13_hull_cov_efficiency,
     fitness_f14_hull_times_coverage,
+    fitness_f15_coverage_waypoint,
+    fitness_f16_weighted_coverage_waypoint,
+    fitness_f17_efficiency_waypoint,
+    fitness_f18_unknown_waypoint,
+    fitness_f19_integral_waypoint,
+    fitness_f20_cov_efficiency_waypoint,
 )
 from ariel.simulation.tasks.exploration_locomotion import (
     fitness_f1_plus_forward,
@@ -165,24 +171,16 @@ def _f15(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(
-        fitness_f1_pure_coverage(N)
-        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
-    )
+    return float(fitness_f15_coverage_waypoint(N, xy, targets, visit_radius=2.0))
 
 
 def _f16(
     N: np.ndarray,
     xy: Sequence[tuple[float, float]] | np.ndarray,
     targets: Sequence[tuple[float, float]],
-    *,
-    alpha: float = 0.5,
     **_: Any,
 ) -> float:
-    return float(
-        alpha * fitness_f1_pure_coverage(N)
-        + (1.0 - alpha) * fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
-    )
+    return float(fitness_f16_weighted_coverage_waypoint(N, xy, targets, alpha=0.5, visit_radius=2.0))
 
 
 def _f17(
@@ -191,10 +189,7 @@ def _f17(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(
-        fitness_f3_unique_cells_per_step(N)
-        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
-    )
+    return float(fitness_f17_efficiency_waypoint(N, xy, targets, visit_radius=2.0))
 
 
 def _f18(
@@ -203,10 +198,7 @@ def _f18(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(
-        fitness_f4_unknown_area_reduction(N)
-        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
-    )
+    return float(fitness_f18_unknown_waypoint(N, xy, targets, visit_radius=2.0))
 
 
 def _f19(
@@ -215,10 +207,7 @@ def _f19(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(
-        fitness_f6_coverage_integral(xy, grid)
-        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
-    )
+    return float(fitness_f19_integral_waypoint(xy, grid, targets, visit_radius=2.0))
 
 
 def _f20(
@@ -227,10 +216,7 @@ def _f20(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(
-        fitness_f7_coverage_efficiency(N, alpha=0.5)
-        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
-    )
+    return float(fitness_f20_cov_efficiency_waypoint(N, xy, targets, visit_radius=2.0))
 
 
 def _f1_plus_forward(
