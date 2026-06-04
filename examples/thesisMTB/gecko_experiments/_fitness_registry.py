@@ -118,7 +118,7 @@ def _f9(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0))
+    return float(fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.5))
 
 
 def _f10(
@@ -171,7 +171,7 @@ def _f15(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f15_coverage_waypoint(N, xy, targets, visit_radius=2.0))
+    return float(fitness_f15_coverage_waypoint(N, xy, targets, visit_radius=2.5))
 
 
 def _f16(
@@ -180,7 +180,7 @@ def _f16(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f16_weighted_coverage_waypoint(N, xy, targets, alpha=0.5, visit_radius=2.0))
+    return float(fitness_f16_weighted_coverage_waypoint(N, xy, targets, alpha=0.5, visit_radius=2.5))
 
 
 def _f17(
@@ -189,7 +189,7 @@ def _f17(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f17_efficiency_waypoint(N, xy, targets, visit_radius=2.0))
+    return float(fitness_f17_efficiency_waypoint(N, xy, targets, visit_radius=2.5))
 
 
 def _f18(
@@ -198,7 +198,7 @@ def _f18(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f18_unknown_waypoint(N, xy, targets, visit_radius=2.0))
+    return float(fitness_f18_unknown_waypoint(N, xy, targets, visit_radius=2.5))
 
 
 def _f19(
@@ -207,7 +207,7 @@ def _f19(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f19_integral_waypoint(xy, grid, targets, visit_radius=2.0))
+    return float(fitness_f19_integral_waypoint(xy, grid, targets, visit_radius=2.5))
 
 
 def _f20(
@@ -216,7 +216,7 @@ def _f20(
     targets: Sequence[tuple[float, float]],
     **_: Any,
 ) -> float:
-    return float(fitness_f20_cov_efficiency_waypoint(N, xy, targets, visit_radius=2.0))
+    return float(fitness_f20_cov_efficiency_waypoint(N, xy, targets, visit_radius=2.5))
 
 
 def _f1_plus_forward(

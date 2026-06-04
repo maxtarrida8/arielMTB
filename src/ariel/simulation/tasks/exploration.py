@@ -554,7 +554,7 @@ def fitness_f15_coverage_waypoint(
     xy: Sequence[tuple[float, float]] | np.ndarray,
     targets: Sequence[tuple[float, float]],
     *,
-    visit_radius: float = 2.0,
+    visit_radius: float = 2.5,
 ) -> float:
     """f15 = f1 + f9.
 
@@ -573,7 +573,7 @@ def fitness_f16_weighted_coverage_waypoint(
     targets: Sequence[tuple[float, float]],
     *,
     alpha: float = 0.5,
-    visit_radius: float = 2.0,
+    visit_radius: float = 2.5,
 ) -> float:
     """f16 = alpha * f1 + (1 - alpha) * f9.
 
@@ -590,7 +590,7 @@ def fitness_f17_efficiency_waypoint(
     xy: Sequence[tuple[float, float]] | np.ndarray,
     targets: Sequence[tuple[float, float]],
     *,
-    visit_radius: float = 2.0,
+    visit_radius: float = 2.5,
 ) -> float:
     """f17 = f3 + f9.
 
@@ -608,7 +608,7 @@ def fitness_f18_unknown_waypoint(
     xy: Sequence[tuple[float, float]] | np.ndarray,
     targets: Sequence[tuple[float, float]],
     *,
-    visit_radius: float = 2.0,
+    visit_radius: float = 2.5,
 ) -> float:
     """f18 = f4 + f9.
 
@@ -625,7 +625,7 @@ def fitness_f19_integral_waypoint(
     grid: GridSpec,
     targets: Sequence[tuple[float, float]],
     *,
-    visit_radius: float = 2.0,
+    visit_radius: float = 2.5,
 ) -> float:
     """f19 = f6 + f9.
 
@@ -643,7 +643,7 @@ def fitness_f20_cov_efficiency_waypoint(
     xy: Sequence[tuple[float, float]] | np.ndarray,
     targets: Sequence[tuple[float, float]],
     *,
-    visit_radius: float = 2.0,
+    visit_radius: float = 2.5,
 ) -> float:
     """f20 = f7 + f9.
 
