@@ -85,8 +85,12 @@ def _f2(N: np.ndarray, **_: Any) -> float:
     return float(fitness_f2_meaningful_coverage(N, lambda_=0.5))
 
 
-def _f3(N: np.ndarray, **_: Any) -> float:
-    return float(fitness_f3_unique_cells_per_step(N))
+def _f3(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    **_: Any,
+) -> float:
+    return float(fitness_f3_unique_cells_per_step(N, xy))
 
 
 def _f4(N: np.ndarray, **_: Any) -> float:
@@ -301,8 +305,9 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
     ),
     "f3": FitnessSpec(
         name="f3",
-        description="Path efficiency: |V_T| / sum_c N(c).",
+        description="Path efficiency: unique cells per metre travelled.",
         func=_f3,
+        needs_xy=True,
     ),
     "f4": FitnessSpec(
         name="f4",

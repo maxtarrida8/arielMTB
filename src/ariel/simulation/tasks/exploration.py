@@ -320,9 +320,23 @@ def fitness_f2_meaningful_coverage(N: np.ndarray, *, lambda_: float) -> float:
     return float(coverage_fraction(N) - float(lambda_) * redundancy_ratio(N))
 
 
-def fitness_f3_unique_cells_per_step(N: np.ndarray) -> float:
-    """f3 = |V_T| / sum_c N(c) = E(T)."""
-    return path_efficiency(N)
+def fitness_f3_unique_cells_per_step(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+) -> float:
+    """f3 = |V_T| / path_length_m.
+
+    Unique cells discovered per metre of planar travel.  Rewards
+    efficient exploration: a robot that covers new ground with every
+    step scores high, while one that circles (lots of metres, few
+    new cells) scores low.
+    """
+    from ariel.simulation.tasks.exploration_locomotion import planar_path_length_m
+
+    path_len = planar_path_length_m(xy)
+    if path_len <= 0.0:
+        return 0.0
+    return float(np.count_nonzero(N > 0) / path_len)
 
 
 def fitness_f4_unknown_area_reduction(N: np.ndarray) -> float:
@@ -506,7 +520,7 @@ def fitness_f11_hull_efficiency(
     Combines convex hull spread (f8) with path efficiency (f3).
     Forces the robot to spread broadly without wasting steps revisiting.
     """
-    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f3_unique_cells_per_step(N)
+    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f3_unique_cells_per_step(N, xy)
 
 
 def fitness_f12_hull_integral(
@@ -598,7 +612,7 @@ def fitness_f17_efficiency_waypoint(
     Rewards reaching targets without redundant revisits.
     """
     return float(
-        fitness_f3_unique_cells_per_step(N)
+        fitness_f3_unique_cells_per_step(N, xy)
         + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
     )
 

@@ -1,44 +1,9 @@
 """GECKO exploration using Nevergrad (PSO) to optimise a NaCPG controller.
 
-This is the Nevergrad counterpart of `exploration_a004.py`. Instead of using
-ARIEL's step-based EA (`ariel.ec.a004`), this script drives the optimisation
-loop with Nevergrad's ask / tell interface -- the same approach used in
-`examples/z_ec_course/A2_template_cpg.py` but with:
-
-- Simulation duration of **30 seconds** (instead of 10).
-- Configurable exploration fitness via the local `_fitness_registry` module
-  (default: `f1`, the pure cell coverage fraction). Switch with `--fitness`.
-- All **5 NaCPG parameter vectors** as decision variables, with the same
-  bounds used in the A2 template (phase / w / amplitudes in [-2π, 2π],
-  ha in [-10, 10], b in [-100, 100]).
-
-The optimiser treats exploration as a *maximisation* problem. Because
-Nevergrad natively minimises, the fitness is negated before being passed to
-`optimizer.tell()`.
-
-Each invocation creates its own folder under
-``__data__/exploration_cpg/runs/<timestamp>[__<run-name>]/`` containing
-``config.json``, ``summary.txt`` and ``best_params.npz``.
-
---- Parameter-set recommendations ---
-
-  **PRESET A – "quick-search"** (default):
-    budget=500, num_workers=50
-
-  **PRESET B – "overnight"**:
-    budget=5000, num_workers=50
-
-  **PRESET C – "large-pop"**:
-    budget=2000, num_workers=200
-
 Run
 ---
-# Preset A (fast):
-uv run examples/thesisMTB/gecko_experiments/exploration_cpg.py --preset A
-
-# Switch fitness:
 uv run examples/thesisMTB/gecko_experiments/exploration_cpg.py \\
-    --fitness f1_plus_speed --run-name speed_v1
+    --budget 500 --workers 50 --dur 120 --fitness f1
 
 # Replay best controller from a previous run folder:
 uv run examples/thesisMTB/gecko_experiments/exploration_cpg.py \\
@@ -97,18 +62,6 @@ from _run_utils import (  # noqa: E402
 
 install()
 console = Console()
-
-# ---------------------------------------------------------------------------
-# Named presets (budget, num_workers)
-# ---------------------------------------------------------------------------
-PRESETS: dict[str, dict[str, int]] = {
-    # Fast proof-of-concept / timing run -- same as A2_template_cpg defaults.
-    "A": {"budget": 500, "num_workers": 50},
-    # Longer overnight run for more signal.
-    "B": {"budget": 1000, "num_workers": 100},
-    # Wide diversity: large PSO population (PSO swarm ~ num_workers).
-    "C": {"budget": 2000, "num_workers": 200},
-}
 
 # ---------------------------------------------------------------------------
 # Simulation constants
@@ -349,30 +302,16 @@ def main() -> None:
         description="GECKO exploration via Nevergrad PSO + NaCPG"
     )
     parser.add_argument(
-        "--preset",
-        type=str,
-        default=None,
-        choices=list(PRESETS.keys()),
-        help=(
-            "Named experiment preset (A / B / C). "
-            "Overrides --budget and --workers when set."
-        ),
-    )
-    parser.add_argument(
         "--budget",
         type=int,
         default=500,
-        help="Total number of NaCPG rollout evaluations (default: 500, preset A).",
+        help="Total number of NaCPG rollout evaluations (default: 500).",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=50,
-        help=(
-            "Nevergrad num_workers (PSO swarm size). "
-            "The loop is sequential so this controls internal PSO population "
-            "diversity, not true parallelism (default: 50)."
-        ),
+        help="Nevergrad num_workers / PSO swarm size (default: 50).",
     )
     parser.add_argument(
         "--dur",
@@ -445,19 +384,8 @@ def main() -> None:
         )
         return
 
-    # Apply preset if given (overrides individual flags)
-    if args.preset is not None:
-        preset = PRESETS[args.preset]
-        budget: int = preset["budget"]
-        num_workers: int = preset["num_workers"]
-        console.rule(
-            f"[bold magenta]Preset {args.preset}: "
-            f"budget={budget}, workers={num_workers}[/bold magenta]"
-        )
-    else:
-        budget = int(args.budget)
-        num_workers = int(args.workers)
-
+    budget = int(args.budget)
+    num_workers = int(args.workers)
     duration = float(args.dur)
     seed = int(args.seed)
     np.random.seed(seed)
@@ -538,6 +466,8 @@ def main() -> None:
 
     best_fitness = -float("inf")
     best_params: dict[str, np.ndarray] | None = None
+    all_fitness: list[float] = []
+    best_so_far: list[float] = []
 
     start_time = time.perf_counter()
     with Progress(
@@ -572,9 +502,11 @@ def main() -> None:
             )
             optimizer.tell(x, -f_value)  # Nevergrad minimises -> negate
 
+            all_fitness.append(f_value)
             if f_value > best_fitness:
                 best_fitness = f_value
                 best_params = {k: np.array(v) for k, v in candidate_params.items()}
+            best_so_far.append(best_fitness)
 
             progress.update(
                 task,
@@ -611,6 +543,31 @@ def main() -> None:
         best_params_path=str(params_path) if best_params is not None else "",
         forward_xy=f"({forward_xy[0]}, {forward_xy[1]})",
     )
+
+    # ------------------------------------------------------------------ #
+    # Fitness over evaluations plot
+    # ------------------------------------------------------------------ #
+    window = max(num_workers, 10)
+    avg_fitness = np.convolve(all_fitness, np.ones(window) / window, mode="valid")
+
+    fig, ax = plt.subplots(figsize=(10, 5))
+    ax.plot(range(len(all_fitness)), all_fitness, ".", color="lightblue",
+            markersize=2, alpha=0.4, label="Per-evaluation")
+    ax.plot(range(window - 1, window - 1 + len(avg_fitness)), avg_fitness,
+            "-", color="blue", linewidth=1.2, label=f"Rolling avg (w={window})")
+    ax.plot(range(len(best_so_far)), best_so_far, "-", color="red",
+            linewidth=1.5, label="Best so far")
+    ax.set_xlabel("Evaluation")
+    ax.set_ylabel(f"Fitness ({fitness_name})")
+    ax.set_title(f"{fitness_name} — budget={budget}, workers={num_workers}, dur={duration}s")
+    ax.legend()
+    ax.grid(True, alpha=0.3)
+    fig.tight_layout()
+
+    plot_path = run_dir / "fitness_over_evaluations.png"
+    fig.savefig(plot_path, dpi=150)
+    console.log(f"Fitness plot saved to: {plot_path}")
+    plt.show()
 
     # ------------------------------------------------------------------ #
     # Viewer replay
