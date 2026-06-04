@@ -74,6 +74,7 @@ from ariel.simulation.controllers import NaCPG
 from ariel.simulation.controllers.controller import Controller
 from ariel.simulation.controllers.na_cpg import create_fully_connected_adjacency
 from ariel.simulation.environments import SimpleFlatWorldWalled
+from ariel.simulation.environments import SimpleFlatWorldWalledWithTargets
 from ariel.simulation.tasks.exploration import (
     GridSpec,
     visit_counts_from_xy,
@@ -117,13 +118,20 @@ DURATION = 30.0  # evaluation duration in seconds
 # Exploration grid: 10 m x 10 m, 100 x 100 cells -- same as exploration_a004
 GRID = GridSpec(width_m=10.0, height_m=10.0, nrow=10, ncol=10, origin_xy=(0.0, 0.0))
 
+TARGETS: list[tuple[float, float]] = [
+    (3.0, 3.0),
+    (3.0, -3.0),
+    (-3.0, -3.0),
+    (-3.0, 3.0),
+]
+
 
 # ---------------------------------------------------------------------------
 # World / model helpers
 # ---------------------------------------------------------------------------
-def _build_world() -> tuple[SimpleFlatWorldWalled, mujoco.MjModel, mujoco.MjData]:
+def _build_world() -> tuple[SimpleFlatWorldWalledWithTargets, mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
-    world = SimpleFlatWorldWalled(load_precompiled=False)
+    world = SimpleFlatWorldWalledWithTargets(load_precompiled=False, targets_xy=TARGETS)
     world.spawn(gecko().spec, position=[0.0, 0.0, 0.1])
     model = cast(mujoco.MjModel, world.spec.compile())
     data = mujoco.MjData(model)
@@ -247,6 +255,7 @@ def _evaluate(
         grid=grid,
         dt=sample_dt,
         forward_xy=forward_xy,
+        targets=TARGETS,
     )
 
 
@@ -324,6 +333,7 @@ def run_replay(
         grid=GRID,
         dt=sample_dt,
         forward_xy=forward_xy,
+        targets=TARGETS,
     )
     console.log(
         f"Replay {fitness_name} = {fit:.4f} "
@@ -626,6 +636,7 @@ def main() -> None:
             grid=GRID,
             dt=sample_dt,
             forward_xy=forward_xy,
+            targets=TARGETS,
         )
         console.log(f"Replay {fitness_name} = {replay_fit:.4f}")
 

@@ -16,7 +16,7 @@ class SimpleFlatWorld(BaseWorld):
     """A flat world with a chequerboard floor."""
 
     name: str = "simple-flat-world"
-
+    
     floor_size: Dimension = (10, 10, 1)  # meters (width, height, depth)
     checker_floor: bool = True
 

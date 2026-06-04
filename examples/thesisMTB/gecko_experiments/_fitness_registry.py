@@ -39,6 +39,7 @@ from ariel.simulation.tasks.exploration import (
     fitness_f6_coverage_integral,
     fitness_f7_coverage_efficiency,
     fitness_f8_convex_hull_coverage,
+    fitness_f9_waypoint_proximity,
     fitness_f10_coverage_hull,
     fitness_f11_hull_efficiency,
     fitness_f12_hull_integral,
@@ -67,6 +68,7 @@ class FitnessSpec:
     needs_grid: bool = False
     needs_dt: bool = False
     needs_forward: bool = False
+    needs_targets: bool = False
 
 
 def _f1(N: np.ndarray, **_: Any) -> float:
@@ -103,6 +105,14 @@ def _f8(
     **_: Any,
 ) -> float:
     return float(fitness_f8_convex_hull_coverage(xy, grid))
+
+
+def _f9(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    **_: Any,
+) -> float:
+    return float(fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0))
 
 
 def _f10(
@@ -147,6 +157,80 @@ def _f14(
     **_: Any,
 ) -> float:
     return float(fitness_f14_hull_times_coverage(N, xy, grid))
+
+
+def _f15(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    **_: Any,
+) -> float:
+    return float(
+        fitness_f1_pure_coverage(N)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
+    )
+
+
+def _f16(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    alpha: float = 0.5,
+    **_: Any,
+) -> float:
+    return float(
+        alpha * fitness_f1_pure_coverage(N)
+        + (1.0 - alpha) * fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
+    )
+
+
+def _f17(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    **_: Any,
+) -> float:
+    return float(
+        fitness_f3_unique_cells_per_step(N)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
+    )
+
+
+def _f18(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    **_: Any,
+) -> float:
+    return float(
+        fitness_f4_unknown_area_reduction(N)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
+    )
+
+
+def _f19(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    targets: Sequence[tuple[float, float]],
+    **_: Any,
+) -> float:
+    return float(
+        fitness_f6_coverage_integral(xy, grid)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
+    )
+
+
+def _f20(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    **_: Any,
+) -> float:
+    return float(
+        fitness_f7_coverage_efficiency(N, alpha=0.5)
+        + fitness_f9_waypoint_proximity(xy, targets, visit_radius=2.0)
+    )
 
 
 def _f1_plus_forward(
@@ -260,6 +344,14 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         needs_xy=True,
         needs_grid=True,
     ),
+    "f9": FitnessSpec(
+        name="f9",
+        description="Waypoint proximity: mean smooth proximity to 4 targets (R=2.0m).",
+        func=_f9,
+        needs_N=False,
+        needs_xy=True,
+        needs_targets=True,
+    ),
     "f10": FitnessSpec(
         name="f10",
         description="0.5 * f1 + 0.5 * f8. Cell coverage + convex hull spread.",
@@ -295,6 +387,50 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         func=_f14,
         needs_xy=True,
         needs_grid=True,
+    ),
+    "f15": FitnessSpec(
+        name="f15",
+        description="f1 + f9: coverage + waypoint proximity (additive).",
+        func=_f15,
+        needs_xy=True,
+        needs_targets=True,
+    ),
+    "f16": FitnessSpec(
+        name="f16",
+        description="0.5*f1 + 0.5*f9: weighted coverage + waypoint proximity.",
+        func=_f16,
+        needs_xy=True,
+        needs_targets=True,
+    ),
+    "f17": FitnessSpec(
+        name="f17",
+        description="f3 + f9: path efficiency + waypoint proximity.",
+        func=_f17,
+        needs_xy=True,
+        needs_targets=True,
+    ),
+    "f18": FitnessSpec(
+        name="f18",
+        description="f4 + f9: unknown-area reduction + waypoint proximity.",
+        func=_f18,
+        needs_xy=True,
+        needs_targets=True,
+    ),
+    "f19": FitnessSpec(
+        name="f19",
+        description="f6 + f9: coverage integral + waypoint proximity.",
+        func=_f19,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
+        needs_targets=True,
+    ),
+    "f20": FitnessSpec(
+        name="f20",
+        description="f7 + f9: coverage+efficiency + waypoint proximity.",
+        func=_f20,
+        needs_xy=True,
+        needs_targets=True,
     ),
     "f1_plus_forward": FitnessSpec(
         name="f1_plus_forward",
@@ -346,6 +482,7 @@ def evaluate_fitness(
     grid: GridSpec | None = None,
     dt: float | None = None,
     forward_xy: tuple[float, float] | None = None,
+    targets: Sequence[tuple[float, float]] | None = None,
 ) -> float:
     """Look up `name` in the registry and call it with the right kwargs.
 
@@ -379,6 +516,10 @@ def evaluate_fitness(
         kwargs["dt"] = dt
     if spec.needs_forward:
         kwargs["forward_xy"] = forward_xy
+    if spec.needs_targets:
+        if targets is None:
+            raise ValueError(f"Fitness '{name}' needs `targets` (waypoint positions).")
+        kwargs["targets"] = targets
 
     return float(spec.func(**kwargs))
 

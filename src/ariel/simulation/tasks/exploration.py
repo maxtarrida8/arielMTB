@@ -414,6 +414,49 @@ def fitness_f8_convex_hull_coverage(
     return float(np.clip(hull_area / arena_area, 0.0, 1.0))
 
 
+def fitness_f9_waypoint_proximity(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    targets: Sequence[tuple[float, float]],
+    *,
+    visit_radius: float = 3.0,
+) -> float:
+    """f9 = mean proximity score across waypoint targets.
+
+    For each target, computes the minimum distance the trajectory ever
+    achieves, then maps it to a smooth score in [0, 1] via
+    ``max(0, 1 - min_dist / R)``.  The final score is the mean over all
+    targets.
+
+    Parameters
+    ----------
+    xy : array-like of shape (T, 2)
+        XY trajectory in world coordinates.
+    targets : sequence of (x, y)
+        Waypoint positions to visit.
+    visit_radius : float
+        Distance threshold R.  A target scores 1.0 when the trajectory
+        passes through it and 0.0 when the closest approach is >= R.
+
+    Returns
+    -------
+    float
+        Mean proximity score in [0, 1].
+    """
+    arr = np.asarray(xy, dtype=float)
+    if arr.ndim != 2 or arr.shape[1] != 2 or len(arr) == 0:
+        return 0.0
+    if len(targets) == 0:
+        return 0.0
+
+    r = max(float(visit_radius), 1e-12)
+    total = 0.0
+    for tx, ty in targets:
+        dists = np.sqrt((arr[:, 0] - float(tx)) ** 2 + (arr[:, 1] - float(ty)) ** 2)
+        min_dist = float(np.min(dists))
+        total += max(0.0, 1.0 - min_dist / r)
+    return float(total / len(targets))
+
+
 def fitness_f7_coverage_efficiency(
     N: np.ndarray,
     *,
