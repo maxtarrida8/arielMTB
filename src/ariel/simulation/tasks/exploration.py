@@ -439,3 +439,69 @@ def fitness_f7_coverage_efficiency(
     eff = path_efficiency(N)
     return float(alpha * cov + (1.0 - alpha) * eff)
 
+
+def fitness_f10_coverage_hull(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f10 = 0.5 * f1 + 0.5 * f8.
+
+    Combines cell coverage (f1) with convex hull spread (f8).
+    f1 fills the interior, f8 forces broad spatial spread.
+    """
+    return 0.5 * fitness_f1_pure_coverage(N) + 0.5 * fitness_f8_convex_hull_coverage(xy, grid)
+
+
+def fitness_f11_hull_efficiency(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f11 = 0.5 * f8 + 0.5 * f3.
+
+    Combines convex hull spread (f8) with path efficiency (f3).
+    Forces the robot to spread broadly without wasting steps revisiting.
+    """
+    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f3_unique_cells_per_step(N)
+
+
+def fitness_f12_hull_integral(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f12 = 0.5 * f8 + 0.5 * f6.
+
+    Combines convex hull spread (f8) with coverage integral (f6).
+    Rewards spreading broadly AND discovering cells early, not just eventually.
+    Does not require the cell visit-count grid N.
+    """
+    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f6_coverage_integral(xy, grid)
+
+
+def fitness_f13_hull_cov_efficiency(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f13 = 0.5 * f8 + 0.5 * f7.
+
+    Combines convex hull spread (f8) with the coverage+efficiency composite (f7).
+    The most comprehensive signal: spread, coverage, and path efficiency together.
+    """
+    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f7_coverage_efficiency(N)
+
+
+def fitness_f14_hull_times_coverage(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f14 = f1 * f8.
+
+    Multiplicative gate: both coverage and hull spread must be non-zero to score.
+    A circling robot has f8 ≈ 0.28 so its coverage reward is cut to 28% of its
+    face value — no amount of cell coverage compensates for a small hull.
+    """
+    return fitness_f1_pure_coverage(N) * fitness_f8_convex_hull_coverage(xy, grid)
+

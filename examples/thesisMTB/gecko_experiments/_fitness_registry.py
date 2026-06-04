@@ -39,6 +39,11 @@ from ariel.simulation.tasks.exploration import (
     fitness_f6_coverage_integral,
     fitness_f7_coverage_efficiency,
     fitness_f8_convex_hull_coverage,
+    fitness_f10_coverage_hull,
+    fitness_f11_hull_efficiency,
+    fitness_f12_hull_integral,
+    fitness_f13_hull_cov_efficiency,
+    fitness_f14_hull_times_coverage,
 )
 from ariel.simulation.tasks.exploration_locomotion import (
     fitness_f1_plus_forward,
@@ -98,6 +103,50 @@ def _f8(
     **_: Any,
 ) -> float:
     return float(fitness_f8_convex_hull_coverage(xy, grid))
+
+
+def _f10(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f10_coverage_hull(N, xy, grid))
+
+
+def _f11(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f11_hull_efficiency(N, xy, grid))
+
+
+def _f12(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f12_hull_integral(xy, grid))
+
+
+def _f13(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f13_hull_cov_efficiency(N, xy, grid))
+
+
+def _f14(
+    N: np.ndarray,
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f14_hull_times_coverage(N, xy, grid))
 
 
 def _f1_plus_forward(
@@ -208,6 +257,42 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         description="Convex hull coverage: hull_area(trajectory) / arena_area. Direct anti-circling signal.",
         func=_f8,
         needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f10": FitnessSpec(
+        name="f10",
+        description="0.5 * f1 + 0.5 * f8. Cell coverage + convex hull spread.",
+        func=_f10,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f11": FitnessSpec(
+        name="f11",
+        description="0.5 * f8 + 0.5 * f3. Convex hull spread + path efficiency.",
+        func=_f11,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f12": FitnessSpec(
+        name="f12",
+        description="0.5 * f8 + 0.5 * f6. Convex hull spread + coverage integral over time.",
+        func=_f12,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f13": FitnessSpec(
+        name="f13",
+        description="0.5 * f8 + 0.5 * f7. Convex hull spread + coverage+efficiency composite.",
+        func=_f13,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f14": FitnessSpec(
+        name="f14",
+        description="f1 * f8. Multiplicative gate: coverage reward scaled by hull spread.",
+        func=_f14,
         needs_xy=True,
         needs_grid=True,
     ),
