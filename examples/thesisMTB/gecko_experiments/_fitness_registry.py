@@ -30,6 +30,16 @@ from typing import Any, Callable
 
 import numpy as np
 
+# ---------------------------------------------------------------------------
+# Shared grid definition — single source of truth.
+# Change nrow/ncol here to resize cells consistently across all scripts.
+# Current: 10 m x 10 m arena with 10x10 cells => 1 m x 1 m per cell.
+# Example: nrow=20, ncol=20 => 0.5 m x 0.5 m cells (finer resolution).
+# ---------------------------------------------------------------------------
+from ariel.simulation.tasks.exploration import GridSpec
+
+ARENA_GRID = GridSpec(width_m=10.0, height_m=10.0, nrow=30, ncol=30, origin_xy=(0.0, 0.0))
+
 from ariel.simulation.tasks.exploration import (
     GridSpec,
     fitness_f1_pure_coverage,
@@ -51,13 +61,6 @@ from ariel.simulation.tasks.exploration import (
     fitness_f18_unknown_waypoint,
     fitness_f19_integral_waypoint,
     fitness_f20_cov_efficiency_waypoint,
-)
-from ariel.simulation.tasks.exploration_locomotion import (
-    fitness_f1_plus_forward,
-    fitness_f1_plus_mean_forward_speed,
-    fitness_f2_plus_forward,
-    fitness_gated_f6_by_forward_speed,
-    fitness_scalarized_explore_locomote,
 )
 
 
@@ -82,15 +85,11 @@ def _f1(N: np.ndarray, **_: Any) -> float:
 
 
 def _f2(N: np.ndarray, **_: Any) -> float:
-    return float(fitness_f2_meaningful_coverage(N, lambda_=0.5))
+    return float(fitness_f2_meaningful_coverage(N, lambda_=0.9))
 
 
-def _f3(
-    N: np.ndarray,
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    **_: Any,
-) -> float:
-    return float(fitness_f3_unique_cells_per_step(N, xy))
+def _f3(N: np.ndarray, **_: Any) -> float:
+    return float(fitness_f3_unique_cells_per_step(N))
 
 
 def _f4(N: np.ndarray, **_: Any) -> float:
@@ -223,74 +222,6 @@ def _f20(
     return float(fitness_f20_cov_efficiency_waypoint(N, xy, targets, visit_radius=2.5))
 
 
-def _f1_plus_forward(
-    N: np.ndarray,
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    forward_xy: tuple[float, float] | None,
-    **_: Any,
-) -> float:
-    return float(
-        fitness_f1_plus_forward(N, xy, forward_xy=forward_xy, alpha=0.2)
-    )
-
-
-def _f1_plus_speed(
-    N: np.ndarray,
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    dt: float,
-    forward_xy: tuple[float, float] | None,
-    **_: Any,
-) -> float:
-    return float(
-        fitness_f1_plus_mean_forward_speed(
-            N,
-            xy,
-            dt=float(dt),
-            forward_xy=forward_xy,
-            beta=0.05,
-        )
-    )
-
-
-def _f2_plus_forward(
-    N: np.ndarray,
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    forward_xy: tuple[float, float] | None,
-    **_: Any,
-) -> float:
-    return float(
-        fitness_f2_plus_forward(N, xy, forward_xy=forward_xy, alpha=0.2)
-    )
-
-
-def _scalarized(
-    N: np.ndarray,
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    forward_xy: tuple[float, float] | None,
-    **_: Any,
-) -> float:
-    return float(
-        fitness_scalarized_explore_locomote(N, xy, forward_xy=forward_xy, a=0.5, b=0.3, c=0.2)
-    )
-
-
-def _f6_gated_speed(
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    grid: GridSpec,
-    dt: float,
-    forward_xy: tuple[float, float] | None,
-    **_: Any,
-) -> float:
-    return float(
-        fitness_gated_f6_by_forward_speed(
-            xy,
-            grid,
-            dt=float(dt),
-            v_min=0.01,
-            forward_xy=forward_xy,
-        )
-    )
-
 
 FITNESS_REGISTRY: dict[str, FitnessSpec] = {
     "f1": FitnessSpec(
@@ -300,14 +231,13 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
     ),
     "f2": FitnessSpec(
         name="f2",
-        description="Meaningful coverage: cov(T) - 0.5 * R(T).",
+        description="Meaningful coverage: cov(T) - 0.9 * R(T).",
         func=_f2,
     ),
     "f3": FitnessSpec(
         name="f3",
-        description="Path efficiency: unique cells per metre travelled.",
+        description="Path efficiency: unique cells / total cell entries. Score in (0,1].",
         func=_f3,
-        needs_xy=True,
     ),
     "f4": FitnessSpec(
         name="f4",
@@ -422,45 +352,6 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         func=_f20,
         needs_xy=True,
         needs_targets=True,
-    ),
-    "f1_plus_forward": FitnessSpec(
-        name="f1_plus_forward",
-        description="f1 + 0.2 * max(0, forward displacement).",
-        func=_f1_plus_forward,
-        needs_xy=True,
-        needs_forward=True,
-    ),
-    "f1_plus_speed": FitnessSpec(
-        name="f1_plus_speed",
-        description="f1 + 0.05 * mean(|v . f_hat|).",
-        func=_f1_plus_speed,
-        needs_xy=True,
-        needs_dt=True,
-        needs_forward=True,
-    ),
-    "f2_plus_forward": FitnessSpec(
-        name="f2_plus_forward",
-        description="f2 (cov - 0.5*redundancy) + 0.2 * max(0, forward displacement).",
-        func=_f2_plus_forward,
-        needs_xy=True,
-        needs_forward=True,
-    ),
-    "scalarized": FitnessSpec(
-        name="scalarized",
-        description="0.5*f1 + 0.3*path_efficiency + 0.2*max(0, forward displacement).",
-        func=_scalarized,
-        needs_xy=True,
-        needs_forward=True,
-    ),
-    "f6_gated_speed": FitnessSpec(
-        name="f6_gated_speed",
-        description="Coverage integral f6 only when mean(|v . f_hat|) >= 0.01 m/s; else 0.",
-        func=_f6_gated_speed,
-        needs_N=False,
-        needs_xy=True,
-        needs_grid=True,
-        needs_dt=True,
-        needs_forward=True,
     ),
 }
 

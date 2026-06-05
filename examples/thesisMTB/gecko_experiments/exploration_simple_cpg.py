@@ -1,13 +1,17 @@
-"""GECKO exploration using Nevergrad (PSO) to optimise a NaCPG controller.
+"""GECKO exploration using Nevergrad (CMA) to optimise a SimpleCPG controller.
+
+Exact replica of exploration_cpg.py but using SimpleCPG (Hopf oscillator)
+instead of NaCPG.  SimpleCPG has simpler dynamics and the same parameter
+API (phase, w, amplitudes, ha, b), making it a drop-in replacement.
 
 Run
 ---
-uv run examples/thesisMTB/gecko_experiments/exploration_cpg.py \\
+uv run examples/thesisMTB/gecko_experiments/exploration_simple_cpg.py \\
     --budget 500 --workers 50 --dur 120 --fitness f1
 
 # Replay best controller from a previous run folder:
-uv run examples/thesisMTB/gecko_experiments/exploration_cpg.py \\
-    --replay __data__/exploration_cpg/runs/2026-04-29_18-00-00__default
+uv run examples/thesisMTB/gecko_experiments/exploration_simple_cpg.py \\
+    --replay __data__/exploration_simple_cpg/runs/2026-04-29_18-00-00__default
 """
 
 from __future__ import annotations
@@ -35,9 +39,8 @@ from rich.progress import (
 from rich.traceback import install
 
 from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
-from ariel.simulation.controllers import NaCPG
+from ariel.simulation.controllers.simple_cpg import SimpleCPG, create_fully_connected_adjacency
 from ariel.simulation.controllers.controller import Controller
-from ariel.simulation.controllers.na_cpg import create_fully_connected_adjacency
 from ariel.simulation.environments import SimpleFlatWorldWalled
 from ariel.simulation.environments import SimpleFlatWorldWalledWithTargets
 from ariel.simulation.tasks.exploration import (
@@ -115,10 +118,8 @@ def _xpos_history_first(tracker: Tracker) -> list[list[float]]:
 def show_xpos_history(history: list[list[float]]) -> None:
     """Plot XY trajectory as two side-by-side figures.
 
-    - Left / Figure 1: full 10 m × 10 m world (GRID bounds), so you can see
-      how much of the arena the robot actually used.
-    - Right / Figure 2: zoomed to the path's bounding box (original view),
-      so fine detail of the motion is still visible.
+    - Left / Figure 1: full 10 m x 10 m world (GRID bounds).
+    - Right / Figure 2: zoomed to the path's bounding box.
     """
     if not history:
         console.log("[yellow]No xpos history to plot.[/yellow]")
@@ -147,7 +148,6 @@ def show_xpos_history(history: list[list[float]]) -> None:
     _draw_path(ax1)
     ax1.set_xlim(ox - half_w, ox + half_w)
     ax1.set_ylim(oy - half_h, oy + half_h)
-    # Draw the grid boundary as a faint rectangle
     from matplotlib.patches import Rectangle
     rect = Rectangle(
         (ox - half_w, oy - half_h),
@@ -161,7 +161,7 @@ def show_xpos_history(history: list[list[float]]) -> None:
     )
     ax1.add_patch(rect)
     ax1.legend()
-    ax1.set_title("Robot Path — full world view (10 m × 10 m)")
+    ax1.set_title("Robot Path — full world view (10 m x 10 m)")
     fig1.tight_layout()
 
     # ---- Figure 2: zoomed to path bounding box ----
@@ -184,7 +184,7 @@ def _evaluate(
     sample_dt: float,
     model: mujoco.MjModel,
     data: mujoco.MjData,
-    na_cpg: NaCPG,
+    simple_cpg: SimpleCPG,
     ctrl: Controller,
     tracker: Tracker,
     duration: float,
@@ -194,7 +194,7 @@ def _evaluate(
     mujoco.mj_resetData(model, data)
     tracker.reset()
 
-    na_cpg.set_param_with_dict(params)
+    simple_cpg.set_param_with_dict(params)
     mujoco.set_mjcb_control(ctrl.set_control)
     simple_runner(model, data, duration=duration)
 
@@ -245,7 +245,7 @@ def run_replay(
     nu = int(model.nu)
 
     adj_dict = create_fully_connected_adjacency(nu)
-    na_cpg = NaCPG(adj_dict, angle_tracking=False)
+    simple_cpg = SimpleCPG(adj_dict, angle_tracking=False)
 
     tracker = Tracker(
         mujoco_obj_to_find=mujoco.mjtObj.mjOBJ_GEOM,
@@ -254,7 +254,7 @@ def run_replay(
         quiet=True,
     )
     ctrl = Controller(
-        controller_callback_function=lambda _m, d, *a, **k: na_cpg.forward(float(d.time)),
+        controller_callback_function=lambda _m, d, *a, **k: simple_cpg.forward(float(d.time)),
         time_steps_per_ctrl_step=10,
         time_steps_per_save=10,
         alpha=1.0,
@@ -268,7 +268,7 @@ def run_replay(
 
     mujoco.mj_resetData(model, data)
     tracker.reset()
-    na_cpg.set_param_with_dict(params)
+    simple_cpg.set_param_with_dict(params)
     mujoco.set_mjcb_control(ctrl.set_control)
 
     console.rule("[bold cyan]Viewer replay[/bold cyan]")
@@ -298,19 +298,19 @@ def run_replay(
 # ---------------------------------------------------------------------------
 def main() -> None:
     parser = argparse.ArgumentParser(
-        description="GECKO exploration via Nevergrad PSO + NaCPG"
+        description="GECKO exploration via Nevergrad CMA + SimpleCPG"
     )
     parser.add_argument(
         "--budget",
         type=int,
         default=500,
-        help="Total number of NaCPG rollout evaluations (default: 500).",
+        help="Total number of SimpleCPG rollout evaluations (default: 500).",
     )
     parser.add_argument(
         "--workers",
         type=int,
         default=50,
-        help="Nevergrad num_workers / PSO swarm size (default: 50).",
+        help="Nevergrad num_workers / CMA swarm size (default: 50).",
     )
     parser.add_argument(
         "--dur",
@@ -405,6 +405,7 @@ def main() -> None:
             "fitness": fitness_name,
             "fitness_description": FITNESS_REGISTRY[fitness_name].description,
             "forward_xy": list(forward_xy),
+            "controller": "SimpleCPG",
         },
     )
     console.log(f"Run folder: {run_dir}")
@@ -418,10 +419,10 @@ def main() -> None:
     console.log(f"GECKO actuators (nu): {nu}")
 
     # ------------------------------------------------------------------ #
-    # Controller (NaCPG, same settings as A2_template_cpg.py)
+    # Controller (SimpleCPG — Hopf oscillator, same parameter API as NaCPG)
     # ------------------------------------------------------------------ #
     adj_dict = create_fully_connected_adjacency(nu)
-    na_cpg = NaCPG(adj_dict, angle_tracking=False)
+    simple_cpg = SimpleCPG(adj_dict, angle_tracking=False)
 
     tracker = Tracker(
         mujoco_obj_to_find=mujoco.mjtObj.mjOBJ_GEOM,
@@ -430,7 +431,7 @@ def main() -> None:
         quiet=True,
     )
     ctrl = Controller(
-        controller_callback_function=lambda _m, d, *a, **k: na_cpg.forward(float(d.time)),
+        controller_callback_function=lambda _m, d, *a, **k: simple_cpg.forward(float(d.time)),
         time_steps_per_ctrl_step=10,
         time_steps_per_save=10,
         alpha=1.0,
@@ -440,7 +441,7 @@ def main() -> None:
     sample_dt = float(model.opt.timestep) * float(ctrl.time_steps_per_save)
 
     # ------------------------------------------------------------------ #
-    # Nevergrad search space (5 parameter vectors, same bounds as A2)
+    # Nevergrad search space (same bounds as NaCPG version)
     # ------------------------------------------------------------------ #
     params_spec = ng.p.Instrumentation(
         phase=ng.p.Array(shape=(nu,)).set_bounds(-2 * np.pi, 2 * np.pi),
@@ -449,7 +450,7 @@ def main() -> None:
         ha=ng.p.Array(shape=(nu,)).set_bounds(-10.0, 10.0),
         b=ng.p.Array(shape=(nu,)).set_bounds(-100.0, 100.0),
     )
-    optimizer = ng.optimizers.PSO(
+    optimizer = ng.optimizers.CMA(
         parametrization=params_spec,
         budget=budget,
         num_workers=num_workers,
@@ -459,8 +460,9 @@ def main() -> None:
     # Optimisation loop (sequential ask / tell)
     # ------------------------------------------------------------------ #
     console.rule(
-        f"[bold blue]Nevergrad PSO -- fitness={fitness_name}, "
-        f"budget={budget}, workers={num_workers}, dur={duration}s, nu={nu}[/bold blue]"
+        f"[bold blue]Nevergrad CMA -- fitness={fitness_name}, "
+        f"budget={budget}, workers={num_workers}, dur={duration}s, nu={nu}, "
+        f"controller=SimpleCPG[/bold blue]"
     )
 
     best_fitness = -float("inf")
@@ -493,7 +495,7 @@ def main() -> None:
                 sample_dt=sample_dt,
                 model=model,
                 data=data,
-                na_cpg=na_cpg,
+                simple_cpg=simple_cpg,
                 ctrl=ctrl,
                 tracker=tracker,
                 duration=duration,
@@ -564,7 +566,7 @@ def main() -> None:
             linewidth=1.5, label="Best so far")
     ax.set_xlabel("Evaluation")
     ax.set_ylabel(f"Fitness ({fitness_name})")
-    ax.set_title(f"{fitness_name} — budget={budget}, workers={num_workers}, dur={duration}s")
+    ax.set_title(f"SimpleCPG | {fitness_name} — budget={budget}, workers={num_workers}, dur={duration}s")
     ax.legend()
     ax.grid(True, alpha=0.3)
     fig.tight_layout()
@@ -582,7 +584,7 @@ def main() -> None:
 
         mujoco.mj_resetData(model, data)
         tracker.reset()
-        na_cpg.set_param_with_dict(best_params)
+        simple_cpg.set_param_with_dict(best_params)
         mujoco.set_mjcb_control(ctrl.set_control)
 
         viewer.launch(model=model, data=data)

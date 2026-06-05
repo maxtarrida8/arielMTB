@@ -36,8 +36,7 @@
 
 **What I did:**
 - created f7 = f1 + f3, an ran it at duration 600 budget 300. 
-- created f8, which rewards spreading by maximizing the convex hull of the robot's path. This was done in order to stop the circling behavior the previous fitness functions have resulted by making the spread out more, as this function is maximized if the robot visits the four corners of the arena. 
-- added 
+
 **Result:**
 - best_fitness: 
 - Behavior observed: 
@@ -49,10 +48,15 @@
 ## 2026-06-03 ##
 
 **What I did:**
--  
+-  - created f8, which rewards spreading by maximizing the convex hull of the robot's path. This was done in order to stop the circling behavior the previous fitness functions have resulted by making the spread out more, as this function is maximized if the robot visits the four corners of the arena. 
+- created SimpleFlatWorldWithTargets world. This was done to add 4 evenly spread out targets to the arena that the robot should visit in order to get rid of the looping in a circle behavior. 
+- added combinations between the new fitness functions (f8 and f9) and the existing ones (f1, f3, f4, f6,f7). 
+- ran f6 at 300 budget and 240 duration.
+
 **Result:**
-- best_fitness: 
-- Behavior observed: 
+- best_fitness: 0.0452 (f6)
+- Behavior observed: robot walked straight to the wall and to a corner
 - Run dir: 
 
 **plan for tomorrow:**
+- testing all the new fitness function created today. If behavior doesn't change consider changing controller. Apply feedback from supervisor too.

@@ -89,7 +89,19 @@ def visit_counts_from_xy(
     xy: Sequence[tuple[float, float]] | np.ndarray,
     grid: GridSpec,
 ) -> np.ndarray:
-    """Return visit counts N for each cell from an XY trajectory.
+    """Return entry counts N for each cell from an XY trajectory.
+
+    Uses **entry-based counting**: N[r,c] is incremented only when the robot
+    *transitions into* cell (r,c) from a different cell.  Continuous presence
+    in a cell (dwell time) counts as a single entry regardless of how many
+    trajectory samples fall there.
+
+    This makes N semantically correct for all metrics:
+
+    - ``N[r,c] = 0``  cell never visited.
+    - ``N[r,c] = 1``  visited exactly once, never returned.
+    - ``N[r,c] = k``  entered k times (left and came back k-1 times).
+    - ``sum(N)``       total cell transitions 
 
     Parameters
     ----------
@@ -101,8 +113,7 @@ def visit_counts_from_xy(
     Returns
     -------
     np.ndarray
-        Integer array with shape (nrow, ncol), where N[r,c] is the number of
-        samples that landed in that cell.
+        Integer array with shape (nrow, ncol).
     """
     N = np.zeros((int(grid.nrow), int(grid.ncol)), dtype=np.int64)
     if len(xy) == 0:
@@ -112,9 +123,12 @@ def visit_counts_from_xy(
     if arr.ndim != 2 or arr.shape[1] != 2:
         raise ValueError(f"Expected xy as (T,2), got shape={arr.shape}")
 
+    prev_cell: tuple[int, int] | None = None
     for x, y in arr:
-        r, c = grid.xy_to_cell(float(x), float(y))
-        N[r, c] += 1
+        cell = grid.xy_to_cell(float(x), float(y))
+        if cell != prev_cell:
+            N[cell[0], cell[1]] += 1
+            prev_cell = cell
     return N
 
 
@@ -124,6 +138,16 @@ def visited_set(N: np.ndarray) -> set[tuple[int, int]]:
         raise ValueError("Expected N as 2D array")
     rs, cs = np.nonzero(N > 0)
     return {(int(r), int(c)) for r, c in zip(rs, cs, strict=True)}
+
+def planar_path_length_m(xy: Sequence[tuple[float, float]] | np.ndarray) -> float:
+    """Total planar path length (sum of segment lengths)."""
+    arr = np.asarray(xy, dtype=float)
+    if len(arr) < 2:
+        return 0.0
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        raise ValueError(f"Expected xy as (T,2), got shape={arr.shape}")
+    d = np.diff(arr[:, :2], axis=0)
+    return float(np.sum(np.linalg.norm(d, axis=1)))
 
 
 # ---------------------------------------------------------------------------
@@ -209,58 +233,6 @@ def frontier_area(N: np.ndarray) -> int:
     return int(len(frontier_cells(N)))
 
 
-def time_to_coverage(
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-    grid: GridSpec,
-    *,
-    x_percent: float,
-    dt: float = 1.0,
-) -> float | None:
-    """Smallest time t such that cov(t) >= x/100.
-
-    Parameters
-    ----------
-    xy
-        XY trajectory samples.
-    grid
-        Grid spec.
-    x_percent
-        Target coverage percentage in [0,100].
-    dt
-        Time step per XY sample (seconds). If you store tracker samples every N
-        simulation steps, dt should match that effective interval.
-
-    Returns
-    -------
-    float | None
-        Time to reach the requested coverage, or None if never reached.
-    """
-    target = float(x_percent) / 100.0
-    target = float(np.clip(target, 0.0, 1.0))
-    if target <= 0.0:
-        return 0.0
-    if len(xy) == 0:
-        return None
-
-    N = np.zeros((int(grid.nrow), int(grid.ncol)), dtype=np.int64)
-    V_count = 0
-    total_cells = int(N.size)
-
-    arr = np.asarray(xy, dtype=float)
-    if arr.ndim != 2 or arr.shape[1] != 2:
-        raise ValueError(f"Expected xy as (T,2), got shape={arr.shape}")
-
-    visited_mask = np.zeros_like(N, dtype=bool)
-    for k, (x, y) in enumerate(arr):
-        r, c = grid.xy_to_cell(float(x), float(y))
-        N[r, c] += 1
-        if not visited_mask[r, c]:
-            visited_mask[r, c] = True
-            V_count += 1
-            if (V_count / total_cells) >= target:
-                return float((k + 1) * float(dt))
-    return None
-
 
 def coverage_integral(
     xy: Sequence[tuple[float, float]] | np.ndarray,
@@ -320,23 +292,16 @@ def fitness_f2_meaningful_coverage(N: np.ndarray, *, lambda_: float) -> float:
     return float(coverage_fraction(N) - float(lambda_) * redundancy_ratio(N))
 
 
-def fitness_f3_unique_cells_per_step(
-    N: np.ndarray,
-    xy: Sequence[tuple[float, float]] | np.ndarray,
-) -> float:
-    """f3 = |V_T| / path_length_m.
+def fitness_f3_unique_cells_per_step(N: np.ndarray) -> float:
+    """f3 = |V_T| / sum_c N(c)  (path efficiency).
 
-    Unique cells discovered per metre of planar travel.  Rewards
-    efficient exploration: a robot that covers new ground with every
-    step scores high, while one that circles (lots of metres, few
-    new cells) scores low.
+    Unique cells visited divided by total cell entries.  With entry-based
+    counting this is a clean ratio: a robot that visits every cell exactly
+    once scores 1.0, a robot that re-enters cells scores < 1.0.  A robot
+    that stays in one cell and never moves scores 1/1 = 1.0 (degenerate
+    optimum), so f3 is best used in combination with a coverage signal.
     """
-    from ariel.simulation.tasks.exploration_locomotion import planar_path_length_m
-
-    path_len = planar_path_length_m(xy)
-    if path_len <= 0.0:
-        return 0.0
-    return float(np.count_nonzero(N > 0) / path_len)
+    return path_efficiency(N)
 
 
 def fitness_f4_unknown_area_reduction(N: np.ndarray) -> float:
@@ -520,7 +485,7 @@ def fitness_f11_hull_efficiency(
     Combines convex hull spread (f8) with path efficiency (f3).
     Forces the robot to spread broadly without wasting steps revisiting.
     """
-    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f3_unique_cells_per_step(N, xy)
+    return 0.5 * fitness_f8_convex_hull_coverage(xy, grid) + 0.5 * fitness_f3_unique_cells_per_step(N)
 
 
 def fitness_f12_hull_integral(
@@ -612,7 +577,7 @@ def fitness_f17_efficiency_waypoint(
     Rewards reaching targets without redundant revisits.
     """
     return float(
-        fitness_f3_unique_cells_per_step(N, xy)
+        fitness_f3_unique_cells_per_step(N)
         + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
     )
 

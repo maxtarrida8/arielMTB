@@ -32,6 +32,63 @@ import numpy as np
 from rich.console import Console
 from rich.table import Table
 
+# ---------------------------------------------------------------------------
+# Shared grid — must match the definition in gecko_experiments/_fitness_registry.py.
+# Import ARENA_GRID from there so both files always stay in sync.
+# ---------------------------------------------------------------------------
+import sys as _sys
+_sys.path.insert(0, str(Path(__file__).parent / "gecko_experiments"))
+from _fitness_registry import ARENA_GRID  # noqa: E402
+from ariel.simulation.tasks.exploration import GridSpec
+
+
+def time_to_coverage(
+    xy: np.ndarray,
+    grid: GridSpec,
+    *,
+    x_percent: float,
+    dt: float = 1.0,
+) -> float | None:
+    """Smallest time t such that the robot has covered >= x_percent% of the grid.
+
+    Parameters
+    ----------
+    xy : np.ndarray, shape (T, 2)
+        XY trajectory samples in world coordinates.
+    grid : GridSpec
+        Grid specification (must match the one used during the run).
+    x_percent : float
+        Target coverage in [0, 100].
+    dt : float
+        Time between consecutive xy samples in seconds.
+
+    Returns
+    -------
+    float | None
+        Time (seconds) to reach the target coverage, or None if never reached.
+    """
+    target = float(np.clip(float(x_percent) / 100.0, 0.0, 1.0))
+    if target <= 0.0:
+        return 0.0
+    arr = np.asarray(xy, dtype=float)
+    if arr.ndim != 2 or arr.shape[1] != 2 or len(arr) == 0:
+        return None
+
+    N = np.zeros((int(grid.nrow), int(grid.ncol)), dtype=np.int64)
+    visited_mask = np.zeros_like(N, dtype=bool)
+    V_count = 0
+    total_cells = int(N.size)
+
+    for k, (x, y) in enumerate(arr):
+        r, c = grid.xy_to_cell(float(x), float(y))
+        N[r, c] += 1
+        if not visited_mask[r, c]:
+            visited_mask[r, c] = True
+            V_count += 1
+            if (V_count / total_cells) >= target:
+                return float((k + 1) * float(dt))
+    return None
+
 console = Console()
 
 # ---------------------------------------------------------------------------
@@ -61,6 +118,10 @@ class RunRecord:
     # From config.json
     start_time: str = ""
     walled: bool = False
+
+    # Computed from best_trajectory.npy (if saved)
+    t25_s: float | None = None   # seconds to reach 25% coverage
+    t50_s: float | None = None   # seconds to reach 50% coverage
 
     # Raw lines (for debugging)
     _raw: dict[str, str] = field(default_factory=dict, repr=False)
@@ -158,6 +219,20 @@ def load_run(folder: Path) -> RunRecord | None:
     rec.start_time = cfg.get("start_time", "")
     rec.walled = _is_walled(folder, cfg)
 
+    # --- trajectory-derived fields ---
+    traj_path = folder / "best_trajectory.npy"
+    if traj_path.exists():
+        try:
+            xy = np.load(traj_path)
+            # Derive sample_dt from duration and trajectory length
+            duration_s = rec.duration_s if rec.duration_s > 0 else 30.0
+            sample_dt = duration_s / max(len(xy) - 1, 1)
+            grid = ARENA_GRID
+            rec.t25_s = time_to_coverage(xy, grid, x_percent=25.0, dt=sample_dt)
+            rec.t50_s = time_to_coverage(xy, grid, x_percent=50.0, dt=sample_dt)
+        except Exception:
+            pass
+
     return rec
 
 
@@ -193,6 +268,8 @@ def print_table(records: list[RunRecord]) -> None:
     table.add_column("Runtime", justify="right")
     table.add_column("Seed", justify="right")
     table.add_column("Walled", justify="center")
+    table.add_column("t25 (s)", justify="right", style="yellow")
+    table.add_column("t50 (s)", justify="right", style="yellow")
     table.add_column("Date", style="dim")
 
     for i, r in enumerate(records, 1):
@@ -208,6 +285,8 @@ def print_table(records: list[RunRecord]) -> None:
             _runtime_str(r.runtime_s),
             str(r.seed) if r.seed else "-",
             "Y" if r.walled else "-",
+            f"{r.t25_s:.1f}" if r.t25_s is not None else "-",
+            f"{r.t50_s:.1f}" if r.t50_s is not None else "-",
             r.start_time[:10] if r.start_time else "-",
         )
 

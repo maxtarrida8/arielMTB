@@ -249,7 +249,7 @@ class SimpleCPG(nn.Module):
         ):
             self.reset()
 
-        with torch.inference_mode():
+        with torch.no_grad():
             # Compute radius for each oscillator
             r = torch.sqrt(self.x**2 + self.y**2 + E)
 

@@ -1,10 +1,19 @@
-"""Pipeline sanity check: force the gecko along a known path and verify f1 & f3.
+"""Pipeline sanity check: force the gecko along a known path and verify f1, f2 & f3.
 
 The robot is teleported along a predetermined square path by directly
 overwriting the freejoint qpos each timestep.  Physics is still active
 so the robot won't follow the exact intended path — but the fitness
-pipeline should correctly compute f1 and f3 for whatever trajectory the
-tracker actually records.
+pipeline should correctly compute f1, f2 and f3 for whatever trajectory
+the tracker actually records.
+
+f3 definition (entry-based):  |V_T| / sum(N)
+  - N is incremented only on cell *transitions* (entry-based counting)
+  - sum(N) = total cell entries = true measure of movement
+  - f3 = 1.0 means every cell entry was a new cell (no re-entries)
+
+f2 definition: cov(T) - lambda * R(T)
+  - R(T) = redundancy ratio = re-entries / total entries
+  - penalises revisiting cells
 
 Usage:
     uv run examples/thesisMTB/gecko_experiments/pipeline_check.py
@@ -23,26 +32,35 @@ from matplotlib.patches import Rectangle
 
 from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
 from ariel.simulation.environments import SimpleFlatWorldWalled
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).parent))
+from _fitness_registry import ARENA_GRID  # noqa: E402
+
 from ariel.simulation.tasks.exploration import (
-    GridSpec,
     fitness_f1_pure_coverage,
+    fitness_f2_meaningful_coverage,
     fitness_f3_unique_cells_per_step,
+    redundancy_ratio,
     visit_counts_from_xy,
+    planar_path_length_m,
 )
-from ariel.simulation.tasks.exploration_locomotion import planar_path_length_m
 from ariel.utils.tracker import Tracker
 
-GRID = GridSpec(width_m=10.0, height_m=10.0, nrow=10, ncol=10, origin_xy=(0.0, 0.0))
+GRID = ARENA_GRID  # defined in _fitness_registry.py — change cell size there
 DURATION = 30.0
 SAVE_EVERY = 10
 
-# Square path: (0,0) -> (3,0) -> (3,3) -> (0,3) -> (0,0)
+# Square path through cell centres (half-integer coords so the robot starts
+# and turns in the middle of a cell, never on a boundary).
+# With 10x10 grid over 10mx10m: cell centres are at ...-1.5, -0.5, 0.5, 1.5...
 WAYPOINTS = [
-    (0.0, 0.0),
-    (3.0, 0.0),
-    (3.0, 3.0),
-    (0.0, 3.0),
-    (0.0, 0.0),
+    (0.5, 0.5),
+    (3.5, 0.5),
+    (3.5, 3.5),
+    (0.5, 3.5),
+    (0.5, 0.5),
 ]
 
 
@@ -130,13 +148,19 @@ def main() -> None:
     f1_manual = float(np.count_nonzero(N > 0)) / float(N.size)
     f1_intended = fitness_f1_pure_coverage(N_intended)
 
-    # f3: pipeline vs manual
-    # f3 = |V_T| / path_length_m  (unique cells per metre)
-    f3_pipeline = fitness_f3_unique_cells_per_step(N, xy_tracked)
+    # f2: coverage - lambda * redundancy  (lambda=0.5)
+    f2_pipeline = fitness_f2_meaningful_coverage(N, lambda_=0.5)
+    f2_intended = fitness_f2_meaningful_coverage(N_intended, lambda_=0.5)
+    R_tracked = redundancy_ratio(N)
+    R_intended = redundancy_ratio(N_intended)
+
+    # f3: |V_T| / sum(N)  (path efficiency, entry-based)
+    f3_pipeline = fitness_f3_unique_cells_per_step(N)
     unique_cells = int(np.count_nonzero(N > 0))
-    path_len_tracked = planar_path_length_m(xy_tracked)
-    f3_manual = float(unique_cells / path_len_tracked) if path_len_tracked > 0 else 0.0
-    f3_intended = fitness_f3_unique_cells_per_step(N_intended, xy_path)
+    total_entries = int(np.sum(N))
+    f3_manual = float(unique_cells / total_entries) if total_entries > 0 else 0.0
+    f3_intended = fitness_f3_unique_cells_per_step(N_intended)
+    path_len_tracked = planar_path_length_m(xy_tracked)  # informational only
 
     # ---- Report ----
     print("=" * 60)
@@ -154,11 +178,18 @@ def main() -> None:
     print(f"  f1 (intended path):        {f1_intended:.6f}")
 
     print()
-    print(f"--- f3: path efficiency = |V_T| / path_length ---")
+    print("--- f2: meaningful coverage = f1 - 0.5 * R(T) ---")
+    print(f"  f2 (pipeline):             {f2_pipeline:.6f}")
+    print(f"  Redundancy R(T):           {R_tracked:.6f}  ({R_tracked*100:.1f}% of entries were re-entries)")
+    print(f"  f2 (intended path):        {f2_intended:.6f}  (R={R_intended:.4f})")
+
+    print()
+    print(f"--- f3: path efficiency = |V_T| / sum(N)  [entry-based] ---")
     print(f"  f3 (pipeline):             {f3_pipeline:.6f}")
-    print(f"  f3 (manual = {unique_cells}/{path_len_tracked:.2f}m):  {f3_manual:.6f}")
+    print(f"  f3 (manual = {unique_cells}/{total_entries}):  {f3_manual:.6f}")
     print(f"  Pipeline == Manual:        {'YES' if abs(f3_pipeline - f3_manual) < 1e-9 else 'NO'}")
     print(f"  f3 (intended path):        {f3_intended:.6f}")
+    print(f"  [info] path length:        {path_len_tracked:.2f} m  (not used in f3 anymore)")
 
     print()
     print("Visit count grid (from tracker):")
@@ -176,8 +207,8 @@ def main() -> None:
     cell_h = GRID.cell_size_y_m
 
     for ax, xy_data, N_grid, title in [
-        (axes[0], xy_tracked, N, f"Actual trajectory (f1={f1_pipeline:.4f})"),
-        (axes[1], xy_path, N_intended, f"Intended path (f1={f1_intended:.4f})"),
+        (axes[0], xy_tracked, N, f"Actual trajectory  f1={f1_pipeline:.3f}  f2={f2_pipeline:.3f}  f3={f3_pipeline:.3f}"),
+        (axes[1], xy_path, N_intended, f"Intended path  f1={f1_intended:.3f}  f2={f2_intended:.3f}  f3={f3_intended:.3f}"),
     ]:
         arr = np.array(xy_data)
 
