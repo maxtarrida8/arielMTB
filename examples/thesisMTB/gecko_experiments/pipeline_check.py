@@ -88,7 +88,7 @@ def main() -> None:
     # ---- Build world ----
     mujoco.set_mjcb_control(None)
     world = SimpleFlatWorldWalled(load_precompiled=False)
-    world.spawn(gecko().spec, position=[0.0, 0.0, 0.1])
+    world.spawn(gecko().spec, position=[0.5, 0.5, 0.1])
     model = cast(mujoco.MjModel, world.spec.compile())
     data = mujoco.MjData(model)
 

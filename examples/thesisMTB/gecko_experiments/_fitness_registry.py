@@ -38,7 +38,7 @@ import numpy as np
 # ---------------------------------------------------------------------------
 from ariel.simulation.tasks.exploration import GridSpec
 
-ARENA_GRID = GridSpec(width_m=10.0, height_m=10.0, nrow=30, ncol=30, origin_xy=(0.0, 0.0))
+ARENA_GRID = GridSpec(width_m=10.0, height_m=10.0, nrow=10, ncol=10, origin_xy=(0.0, 0.0))
 
 from ariel.simulation.tasks.exploration import (
     GridSpec,
@@ -233,7 +233,7 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         name="f2",
         description="Meaningful coverage: cov(T) - 0.9 * R(T).",
         func=_f2,
-    ),
+    ), 
     "f3": FitnessSpec(
         name="f3",
         description="Path efficiency: unique cells / total cell entries. Score in (0,1].",
