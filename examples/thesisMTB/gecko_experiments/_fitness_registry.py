@@ -85,7 +85,7 @@ def _f1(N: np.ndarray, **_: Any) -> float:
 
 
 def _f2(N: np.ndarray, **_: Any) -> float:
-    return float(fitness_f2_meaningful_coverage(N, lambda_=0.9))
+    return float(fitness_f2_meaningful_coverage(N, lambda_=0.6))
 
 
 def _f3(N: np.ndarray, **_: Any) -> float:
