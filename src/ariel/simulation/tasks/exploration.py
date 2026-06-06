@@ -7,6 +7,7 @@ on which grid cells were visited.
 
 from __future__ import annotations
 
+from collections import deque
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
 
@@ -128,6 +129,45 @@ def visit_counts_from_xy(
         cell = grid.xy_to_cell(float(x), float(y))
         if cell != prev_cell:
             N[cell[0], cell[1]] += 1
+            prev_cell = cell
+    return N
+
+
+def visit_counts_from_xy_buffered(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    *,
+    buffer_size: int = 4,
+) -> np.ndarray:
+    """Like :func:`visit_counts_from_xy` but with a recency buffer.
+
+    A cell transition is only counted when the destination cell is NOT
+    among the last ``buffer_size`` distinct cells visited.  This makes
+    gait oscillation between a few adjacent cells free (buffer absorbs
+    the re-entries) while still penalising large-scale loops that
+    revisit cells from far back in the trajectory.
+
+    First visits are always counted (the cell cannot be in the buffer
+    if it was never visited), so coverage metrics computed from the
+    returned N are identical to the non-buffered version.
+    """
+    N = np.zeros((int(grid.nrow), int(grid.ncol)), dtype=np.int64)
+    if len(xy) == 0:
+        return N
+
+    arr = np.asarray(xy, dtype=float)
+    if arr.ndim != 2 or arr.shape[1] != 2:
+        raise ValueError(f"Expected xy as (T,2), got shape={arr.shape}")
+
+    recent: deque[tuple[int, int]] = deque(maxlen=buffer_size)
+    prev_cell: tuple[int, int] | None = None
+
+    for x, y in arr:
+        cell = grid.xy_to_cell(float(x), float(y))
+        if cell != prev_cell:
+            if cell not in recent:
+                N[cell[0], cell[1]] += 1
+            recent.append(cell)
             prev_cell = cell
     return N
 
@@ -632,4 +672,86 @@ def fitness_f20_cov_efficiency_waypoint(
         fitness_f7_coverage_efficiency(N, alpha=0.5)
         + fitness_f9_waypoint_proximity(xy, targets, visit_radius=visit_radius)
     )
+
+
+# ---------------------------------------------------------------------------
+# Buffered-redundancy and time-pressure fitness functions (f21–f24)
+# ---------------------------------------------------------------------------
+
+def fitness_f21_integral_meaningful(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    *,
+    lambda_: float = 0.6,
+    buffer_size: int = 4,
+) -> float:
+    """f21 = f6(xy) - lambda * R_buffered(xy).
+
+    Coverage integral (time-pressured: early discovery scores higher)
+    minus buffered redundancy penalty (gait oscillation is free,
+    large-scale loops are penalised).
+
+    Designed for segmented/steered CPGs where backtracking across
+    segments should be discouraged but natural gait oscillation
+    at cell boundaries must not be penalised.
+    """
+    f6 = coverage_integral(xy, grid)
+    N_buf = visit_counts_from_xy_buffered(xy, grid, buffer_size=buffer_size)
+    R_buf = redundancy_ratio(N_buf)
+    return float(f6 - lambda_ * R_buf)
+
+
+def fitness_f22_integral_times_hull(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f22 = f6 * f8.
+
+    Multiplicative gate: fast coverage (f6) scaled by spatial spread (f8).
+    A circling robot has low hull area → entire coverage integral is
+    multiplied down. A robot that spreads broadly but discovers cells
+    slowly also scores poorly.  Both components must be high to score.
+    """
+    f6 = coverage_integral(xy, grid)
+    f8 = fitness_f8_convex_hull_coverage(xy, grid)
+    return float(f6 * f8)
+
+
+def fitness_f23_integral_plus_hull(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+) -> float:
+    """f23 = 0.5 * f6 + 0.5 * f8.
+
+    Additive blend of fast coverage and spatial spread.
+    Less aggressive than the multiplicative f22 — a robot with
+    decent f6 but poor f8 still gets partial credit.
+    """
+    f6 = coverage_integral(xy, grid)
+    f8 = fitness_f8_convex_hull_coverage(xy, grid)
+    return float(0.5 * f6 + 0.5 * f8)
+
+
+def fitness_f24_meaningful_coverage_buffered(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    *,
+    lambda_: float = 0.6,
+    buffer_size: int = 4,
+) -> float:
+    """f24 = cov(T) - lambda * R_buffered(T).
+
+    The fixed version of f2.  Uses buffered redundancy so that gait
+    oscillation between adjacent cells is not penalised, fixing the
+    deceptive local optimum where staying still (R=0, cov=0.01) beats
+    any oscillatory movement.
+
+    With buffer_size=4, a robot oscillating between up to 4 adjacent
+    cells sees R_buffered=0.  Only returning to a cell that has dropped
+    out of the buffer is counted as redundancy.
+    """
+    N_buf = visit_counts_from_xy_buffered(xy, grid, buffer_size=buffer_size)
+    cov = coverage_fraction(N_buf)
+    R_buf = redundancy_ratio(N_buf)
+    return float(cov - lambda_ * R_buf)
 

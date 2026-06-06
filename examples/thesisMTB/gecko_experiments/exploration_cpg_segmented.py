@@ -88,7 +88,7 @@ TARGETS: list[tuple[float, float]] = [
 def _build_world() -> tuple[SimpleFlatWorldWalledWithTargets, mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
     world = SimpleFlatWorldWalledWithTargets(load_precompiled=False, targets_xy=TARGETS)
-    world.spawn(gecko().spec, position=[0.5, 0.5, 0.1])
+    world.spawn(gecko().spec, position=[0.0, 0.0, 0.1])
     model = cast(mujoco.MjModel, world.spec.compile())
     data = mujoco.MjData(model)
     return world, model, data

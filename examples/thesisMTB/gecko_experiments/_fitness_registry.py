@@ -61,6 +61,10 @@ from ariel.simulation.tasks.exploration import (
     fitness_f18_unknown_waypoint,
     fitness_f19_integral_waypoint,
     fitness_f20_cov_efficiency_waypoint,
+    fitness_f21_integral_meaningful,
+    fitness_f22_integral_times_hull,
+    fitness_f23_integral_plus_hull,
+    fitness_f24_meaningful_coverage_buffered,
 )
 
 
@@ -222,6 +226,37 @@ def _f20(
     return float(fitness_f20_cov_efficiency_waypoint(N, xy, targets, visit_radius=2.5))
 
 
+def _f21(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f21_integral_meaningful(xy, grid, lambda_=0.6, buffer_size=4))
+
+
+def _f22(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f22_integral_times_hull(xy, grid))
+
+
+def _f23(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f23_integral_plus_hull(xy, grid))
+
+
+def _f24(
+    xy: Sequence[tuple[float, float]] | np.ndarray,
+    grid: GridSpec,
+    **_: Any,
+) -> float:
+    return float(fitness_f24_meaningful_coverage_buffered(xy, grid, lambda_=0.6, buffer_size=4))
+
 
 FITNESS_REGISTRY: dict[str, FitnessSpec] = {
     "f1": FitnessSpec(
@@ -352,6 +387,38 @@ FITNESS_REGISTRY: dict[str, FitnessSpec] = {
         func=_f20,
         needs_xy=True,
         needs_targets=True,
+    ),
+    "f21": FitnessSpec(
+        name="f21",
+        description="f6 - 0.6*R_buffered: coverage integral with buffered redundancy penalty.",
+        func=_f21,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f22": FitnessSpec(
+        name="f22",
+        description="f6 * f8: coverage integral × convex hull (multiplicative gate).",
+        func=_f22,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f23": FitnessSpec(
+        name="f23",
+        description="0.5*f6 + 0.5*f8: coverage integral + convex hull (additive).",
+        func=_f23,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
+    ),
+    "f24": FitnessSpec(
+        name="f24",
+        description="cov(T) - 0.6*R_buffered: f2 fixed with buffered redundancy (K=4).",
+        func=_f24,
+        needs_N=False,
+        needs_xy=True,
+        needs_grid=True,
     ),
 }
 
