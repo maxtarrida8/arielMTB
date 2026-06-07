@@ -26,6 +26,7 @@ import argparse
 import json
 import sys
 import time
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 from typing import cast
 
@@ -210,47 +211,54 @@ def _split_params(
 
 
 # ---------------------------------------------------------------------------
-# Single-rollout evaluation
+# Top-level picklable worker — one subprocess per candidate evaluation.
+# Must be module-level (not a closure) for ProcessPoolExecutor on Windows.
 # ---------------------------------------------------------------------------
-def _evaluate(
-    params: dict[str, np.ndarray],
-    *,
-    n_segments: int,
-    fitness_name: str,
-    forward_xy: tuple[float, float],
-    sample_dt: float,
-    model: mujoco.MjModel,
-    data: mujoco.MjData,
-    na_cpg: NaCPG,
-    ctrl: Controller,
-    tracker: Tracker,
-    duration: float,
-    grid: "GridSpec",
-) -> float:
-    mujoco.mj_resetData(model, data)
-    tracker.reset()
+def _segmented_eval_worker(job: dict) -> tuple[float, list[tuple[float, float]]]:
+    """Build a fresh MuJoCo context per subprocess and evaluate one candidate.
+
+    Returns (fitness, xy_trajectory) so the main process can track best params.
+    """
+    params: dict[str, np.ndarray] = {k: np.asarray(v) for k, v in job["params"].items()}
+    fitness_name: str = job["fitness_name"]
+    duration: float = job["duration"]
+    n_segments: int = job["n_segments"]
+    forward_xy: tuple[float, float] = tuple(job["forward_xy"])  # type: ignore[assignment]
+
+    world, model, data = _build_world()
+    nu = int(model.nu)
+    adj_dict = create_fully_connected_adjacency(nu)
+    na_cpg = NaCPG(adj_dict, angle_tracking=False)
+    tracker = Tracker(
+        mujoco_obj_to_find=mujoco.mjtObj.mjOBJ_GEOM,
+        name_to_bind="core",
+        observable_attributes=["xpos"],
+        quiet=True,
+    )
+    ctrl = Controller(
+        controller_callback_function=lambda _m, d, *a, **k: na_cpg.forward(float(d.time)),
+        time_steps_per_ctrl_step=10,
+        time_steps_per_save=10,
+        alpha=1.0,
+        tracker=tracker,
+    )
+    ctrl.tracker.setup(world.spec, data)
+    sample_dt = float(model.opt.timestep) * float(ctrl.time_steps_per_save)
 
     base, segment_bs = _split_params(params, n_segments)
-
-    # Set base gait (phase, w, amplitudes, ha) — b will be set per segment
     na_cpg.set_param_with_dict(base)
-
     mujoco.set_mjcb_control(ctrl.set_control)
 
     segment_duration = duration / n_segments
     _segmented_step_loop(model, data, na_cpg, segment_bs, segment_duration)
 
     xy = _xy_from_tracker(tracker)
-    N = visit_counts_from_xy(xy, grid)
-    return evaluate_fitness(
-        fitness_name,
-        N=N,
-        xy=xy,
-        grid=grid,
-        dt=sample_dt,
-        forward_xy=forward_xy,
-        targets=TARGETS,
+    N = visit_counts_from_xy(xy, GRID)
+    fitness = evaluate_fitness(
+        fitness_name, N=N, xy=xy, grid=GRID,
+        dt=sample_dt, forward_xy=forward_xy, targets=TARGETS,
     )
+    return fitness, xy
 
 
 # ---------------------------------------------------------------------------
@@ -481,6 +489,7 @@ def main() -> None:
 
     best_fitness = -float("inf")
     best_params: dict[str, np.ndarray] | None = None
+    best_xy: list[tuple[float, float]] = []
     all_fitness: list[float] = []
     best_so_far: list[float] = []
 
@@ -496,37 +505,41 @@ def main() -> None:
     ) as progress:
         task = progress.add_task("[cyan]Optimising...", total=budget, info="")
 
-        for _ in range(budget):
-            x = optimizer.ask()
-            candidate_params: dict[str, np.ndarray] = x.kwargs  # type: ignore[assignment]
+        with ProcessPoolExecutor(max_workers=num_workers) as pool:
+            evals_done = 0
+            while evals_done < budget:
+                batch_size = min(num_workers, budget - evals_done)
+                candidates = [optimizer.ask() for _ in range(batch_size)]
+                jobs = [
+                    {
+                        "fitness_name": fitness_name,
+                        "duration": duration,
+                        "n_segments": n_segments,
+                        "forward_xy": list(forward_xy),
+                        "params": {
+                            k: np.asarray(v).tolist() for k, v in c.kwargs.items()
+                        },
+                    }
+                    for c in candidates
+                ]
+                futures = [pool.submit(_segmented_eval_worker, j) for j in jobs]
+                batch_results = [f.result() for f in futures]
 
-            f_value = _evaluate(
-                candidate_params,
-                n_segments=n_segments,
-                fitness_name=fitness_name,
-                forward_xy=forward_xy,
-                sample_dt=sample_dt,
-                model=model,
-                data=data,
-                na_cpg=na_cpg,
-                ctrl=ctrl,
-                tracker=tracker,
-                duration=duration,
-                grid=GRID,
-            )
-            optimizer.tell(x, -f_value)
+                for c, (f_value, xy) in zip(candidates, batch_results):
+                    optimizer.tell(c, -f_value)
+                    all_fitness.append(f_value)
+                    if f_value > best_fitness:
+                        best_fitness = f_value
+                        best_params = {k: np.array(v) for k, v in c.kwargs.items()}
+                        best_xy = xy
+                    best_so_far.append(best_fitness)
 
-            all_fitness.append(f_value)
-            if f_value > best_fitness:
-                best_fitness = f_value
-                best_params = {k: np.array(v) for k, v in candidate_params.items()}
-                best_xy = _xy_from_tracker(tracker)
-            best_so_far.append(best_fitness)
-
-            progress.update(
-                task, advance=1,
-                info=f"| {fitness_name}={f_value:.4f} | best={best_fitness:.4f}",
-            )
+                evals_done += batch_size
+                last_f = batch_results[-1][0]
+                progress.update(
+                    task, advance=batch_size,
+                    info=f"| {fitness_name}={last_f:.4f} | best={best_fitness:.4f}",
+                )
 
     runtime_s = time.perf_counter() - start_time
 
