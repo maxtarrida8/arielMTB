@@ -51,7 +51,7 @@ from rich.traceback import install
 from torch import nn
 
 from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
-from ariel.simulation.environments import SimpleFlatWorldWalled
+from ariel.simulation.environments import SimpleFlatWorld
 
 install()
 console = Console()
@@ -71,13 +71,18 @@ CONTROL_STEP_FREQ = 20  # NN fires every 20 physics steps (0.04 s)
 
 DURATION = 1200.0  # default seconds
 
-# 4 starting positions: centre, two opposing corners, one edge
-START_POSITIONS: list[tuple[float, float]] = [
-    (0.0, 0.0),      # centre
-    (3.0, 3.0),      # NE quadrant
-    (-3.0, -3.0),    # SW quadrant
-    (4.0, 0.0),      # east edge
-]
+NUM_START_POSITIONS = 4
+SPAWN_MARGIN = 0.5  # stay this far from arena edge
+
+def random_start_positions(n: int = NUM_START_POSITIONS) -> list[tuple[float, float]]:
+    """Sample n random positions within the arena (with margin)."""
+    half_w = ARENA_WIDTH / 2.0 - SPAWN_MARGIN
+    half_h = ARENA_HEIGHT / 2.0 - SPAWN_MARGIN
+    return [
+        (float(np.random.uniform(-half_w, half_w)),
+         float(np.random.uniform(-half_h, half_h)))
+        for _ in range(n)
+    ]
 
 SCRIPT_NAME = Path(__file__).stem
 CWD = Path.cwd()
@@ -219,7 +224,7 @@ def _build_world(
 ) -> tuple[mujoco.MjModel, mujoco.MjData, int]:
     """Return (model, data, core_geom_id)."""
     mujoco.set_mjcb_control(None)
-    world = SimpleFlatWorldWalled(load_precompiled=False)
+    world = SimpleFlatWorld(load_precompiled=False)
     world.spawn(gecko().spec, position=[spawn_xy[0], spawn_xy[1], 0.1])
     model = cast(mujoco.MjModel, world.spec.compile())
     data = mujoco.MjData(model)
@@ -411,6 +416,7 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     best_fitness = float("inf")
     best_weights: np.ndarray | None = None
     fitness_history: list[float] = []
+    mean_history: list[float] = []
 
     with ProcessPoolExecutor(max_workers=args.workers, initializer=_init_worker) as pool:
         with Progress(
@@ -422,12 +428,13 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
             task = progress.add_task("Evolving", total=args.budget)
 
             for gen in range(args.budget):
+                starts = random_start_positions()
                 candidates = [optimizer.ask() for _ in range(pop_size)]
                 jobs = [
                     {
                         "weights": c.value,
                         "duration": args.dur,
-                        "start_positions": START_POSITIONS,
+                        "start_positions": starts,
                         "n_nn_params": n_nn_params,
                     }
                     for c in candidates
@@ -445,6 +452,7 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
                     best_weights = np.array(candidates[best_idx].value)
 
                 fitness_history.append(-gen_best)  # store as positive coverage
+                mean_history.append(-float(np.mean(fitnesses)))
                 progress.update(task, advance=1)
                 console.log(
                     f"Gen {gen + 1}/{args.budget} | "
@@ -461,6 +469,7 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     # Save results
     np.save(run_dir / "best_weights.npy", best_weights)
     np.save(run_dir / "fitness_history.npy", np.array(fitness_history))
+    np.save(run_dir / "mean_history.npy", np.array(mean_history))
 
     # Summary
     summary = {
@@ -475,11 +484,14 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     (run_dir / "summary.json").write_text(json.dumps(summary, indent=2))
 
     # Fitness plot
+    generations = list(range(1, len(fitness_history) + 1))
     fig, ax = plt.subplots(figsize=(8, 4))
-    ax.plot(fitness_history)
+    ax.plot(generations, fitness_history, label="Best (gen)")
+    ax.plot(generations, mean_history, color="red", alpha=0.7, label="Mean (gen)")
     ax.set_xlabel("Generation")
-    ax.set_ylabel("Best Coverage Fraction")
+    ax.set_ylabel("Coverage Fraction")
     ax.set_title("Coverage over Generations")
+    ax.legend()
     ax.grid(True)
     fig.tight_layout()
     fig.savefig(run_dir / "fitness_history.png", dpi=150)
