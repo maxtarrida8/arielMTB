@@ -1,16 +1,4 @@
-"""NN-based exploration controller for the gecko robot.
-
-A small neural network receives the robot's position, velocity, a local
-visit-count gradient (4 neighboring cells), and two evolvable-frequency
-gait clocks.  It outputs 8 joint angles directly — no CPG.
-
-CMA-ES evolves the NN weights + 2 gait-clock frequencies to maximise
-coverage (fraction of 10×10 grid cells visited) over a fixed duration.
-
-The visit grid is 12×12 internally: a 10×10 scoring region surrounded by
-a 1-cell ring with hardcoded high visit counts that acts as a repulsive
-boundary (the NN learns to avoid high-count cells, including the ring).
-
+"""
 Run
 ---
 uv run examples/thesisMTB/gecko_experiments/NNexp.py \\
@@ -120,23 +108,25 @@ class ExplorationGrid:
         self.grid[:, -1] = RING_VISIT_COUNT
         self.prev_cell = None
 
-    def xy_to_inner_cell(self, x: float, y: float) -> tuple[int, int]:
-        """Map world XY to inner grid (row, col) in [0, GRID_ROWS-1] × [0, GRID_COLS-1].
-
-        Clamps positions outside the arena to the nearest edge cell.
-        """
+    @staticmethod
+    def is_inside_arena(x: float, y: float) -> bool:
         half_w = ARENA_WIDTH / 2.0
         half_h = ARENA_HEIGHT / 2.0
-        # Normalise to [0, 1)
+        return -half_w <= x <= half_w and -half_h <= y <= half_h
+
+    def xy_to_inner_cell(self, x: float, y: float) -> tuple[int, int] | None:
+        """Map world XY to inner grid (row, col) in [0, GRID_ROWS-1] × [0, GRID_COLS-1].
+
+        Returns None when the position is outside the arena.
+        """
+        if not self.is_inside_arena(x, y):
+            return None
+        half_w = ARENA_WIDTH / 2.0
+        half_h = ARENA_HEIGHT / 2.0
         fx = (x + half_w) / ARENA_WIDTH
         fy = (y + half_h) / ARENA_HEIGHT
-        eps = 1e-12
-        fx = float(np.clip(fx, 0.0, 1.0 - eps))
-        fy = float(np.clip(fy, 0.0, 1.0 - eps))
-        col = int(fx * GRID_COLS)
-        row = int(fy * GRID_ROWS)
-        col = int(np.clip(col, 0, GRID_COLS - 1))
-        row = int(np.clip(row, 0, GRID_ROWS - 1))
+        col = min(int(fx * GRID_COLS), GRID_COLS - 1)
+        row = min(int(fy * GRID_ROWS), GRID_ROWS - 1)
         return row, col
 
     def _to_grid_index(self, inner_row: int, inner_col: int) -> tuple[int, int]:
@@ -144,29 +134,59 @@ class ExplorationGrid:
         return inner_row + 1, inner_col + 1
 
     def update(self, x: float, y: float) -> None:
-        """Increment visit count if the robot crossed into a new cell."""
+        """Increment visit count if the robot crossed into a new cell.
+
+        Does nothing when outside the arena and resets prev_cell so that
+        re-entering counts as a fresh cell transition.
+        """
         inner = self.xy_to_inner_cell(x, y)
+        if inner is None:
+            self.prev_cell = None
+            return
         if inner != self.prev_cell:
             gr, gc = self._to_grid_index(*inner)
             self.grid[gr, gc] += 1
             self.prev_cell = inner
 
+    _LOG1P_RING = float(np.log1p(RING_VISIT_COUNT))
+
     def neighbor_visits(self, x: float, y: float) -> tuple[float, float, float, float]:
         """Return normalised visit counts of the 4 neighbours (N, S, E, W).
 
-        Uses tanh(count / 5) so the signal saturates: the difference between
-        0 and 3 visits matters more than between 30 and 33.
+        Uses log1p(count) / log1p(RING_VISIT_COUNT) for a smoother, less
+        saturating signal than the previous tanh normalization.  Output is
+        bounded to [0, 1].
+
+        When outside the arena, returns all 1.0.
         """
-        inner_r, inner_c = self.xy_to_inner_cell(x, y)
-        gr, gc = self._to_grid_index(inner_r, inner_c)
+        inner = self.xy_to_inner_cell(x, y)
+        if inner is None:
+            return 1.0, 1.0, 1.0, 1.0
+        gr, gc = self._to_grid_index(*inner)
         raw = np.array([
             self.grid[gr + 1, gc],  # north  (+row = +y)
             self.grid[gr - 1, gc],  # south
             self.grid[gr, gc + 1],  # east   (+col = +x)
             self.grid[gr, gc - 1],  # west
         ], dtype=np.float64)
-        normed = np.tanh(raw / 5.0)
+        normed = np.log1p(raw) / self._LOG1P_RING
         return float(normed[0]), float(normed[1]), float(normed[2]), float(normed[3])
+
+    def neighbor_edge_flags(self, x: float, y: float) -> tuple[float, float, float, float]:
+        """Return binary arena-edge flags for the 4 neighbours (N, S, E, W).
+
+        1.0 if that neighbour lies on the arena boundary (ring), 0.0 otherwise.
+        When outside the arena, returns all 1.0.
+        """
+        inner = self.xy_to_inner_cell(x, y)
+        if inner is None:
+            return 1.0, 1.0, 1.0, 1.0
+        inner_r, inner_c = inner
+        n_edge = 1.0 if inner_r == GRID_ROWS - 1 else 0.0
+        s_edge = 1.0 if inner_r == 0 else 0.0
+        e_edge = 1.0 if inner_c == GRID_COLS - 1 else 0.0
+        w_edge = 1.0 if inner_c == 0 else 0.0
+        return n_edge, s_edge, e_edge, w_edge
 
     def coverage_fraction(self) -> float:
         """Fraction of inner 10×10 cells visited at least once."""
@@ -182,11 +202,15 @@ class ExplorationGrid:
 #                                NN Controller                                #
 # =========================================================================== #
 class ExplorationNetwork(nn.Module):
-    """12 inputs → 16 hidden (ELU) → 8 joint angles (Tanh·π/2)."""
+    """16 inputs → 16 hidden (ELU) → 8 joint angles (Tanh·π/2).
+
+    Inputs: x, y, vx, vy, 4 neighbor visit counts (log1p),
+    4 arena-edge flags, 4 gait-clock phases (sin/cos × 2 freqs).
+    """
 
     def __init__(self) -> None:
         super().__init__()
-        self.fc1 = nn.Linear(12, 16)
+        self.fc1 = nn.Linear(16, 16)
         self.fc2 = nn.Linear(16, 8)
         self.hidden_act = nn.ELU()
         self.output_act = nn.Tanh()
@@ -281,6 +305,7 @@ def run_exploration(
             vy_norm = np.tanh(vy * vel_scale)
 
             vn, vs, ve, vw = grid.neighbor_visits(x, y)
+            en, es, ee, ew = grid.neighbor_edge_flags(x, y)
 
             t = float(data.time)
             phase_slow_sin = np.sin(2.0 * np.pi * f_slow * t)
@@ -292,6 +317,7 @@ def run_exploration(
                 x_norm, y_norm,
                 vx_norm, vy_norm,
                 vn, vs, ve, vw,
+                en, es, ee, ew,
                 phase_slow_sin, phase_slow_cos,
                 phase_fast_sin, phase_fast_cos,
             ], dtype=np.float32)
@@ -409,7 +435,9 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
         "n_total_params": n_total,
         "pop_size": pop_size,
         "budget_evals": budget,
-        "start_positions": START_POSITIONS,
+        "start_positions": "randomized_per_generation",
+        "num_start_positions": NUM_START_POSITIONS,
+        "spawn_margin": SPAWN_MARGIN,
     }
     (run_dir / "config.json").write_text(json.dumps(config, indent=2))
 
@@ -556,12 +584,14 @@ def run_replay(replay_dir: Path, duration: float) -> None:
             vx_norm = np.tanh(vx * vel_scale)
             vy_norm = np.tanh(vy * vel_scale)
             vn, vs, ve, vw = grid.neighbor_visits(x, y)
+            en, es, ee, ew = grid.neighbor_edge_flags(x, y)
             t = float(d.time)
 
             state = np.array([
                 x_norm, y_norm,
                 vx_norm, vy_norm,
                 vn, vs, ve, vw,
+                en, es, ee, ew,
                 np.sin(2.0 * np.pi * f_slow * t),
                 np.cos(2.0 * np.pi * f_slow * t),
                 np.sin(2.0 * np.pi * f_fast * t),
