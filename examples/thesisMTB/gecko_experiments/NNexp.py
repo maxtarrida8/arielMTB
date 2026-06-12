@@ -275,17 +275,33 @@ def run_exploration(
     f_slow: float,
     f_fast: float,
     duration: float,
-) -> tuple[float, list[tuple[float, float]]]:
-    """Simulate one evaluation.  Returns (coverage_fraction, xy_trajectory)."""
+) -> tuple[float, float, list[tuple[float, float]], bool]:
+    """Simulate one evaluation.
+
+    Returns (coverage_integral, final_coverage, xy_trajectory, diverged).
+    coverage_integral is the coverage fraction time-averaged over the full
+    requested duration (in [0, 1]): reaching the same final coverage earlier
+    scores higher.
+    final_coverage is the plain fraction of cells visited by the end.
+    diverged is True when MuJoCo's auto-reset fired (numerical divergence);
+    the episode stops there and the remaining time contributes zero to the
+    integral, so divergence is penalised proportionally to how early it hit.
+    """
     grid = ExplorationGrid()
     trajectory: list[tuple[float, float]] = []
+    coverage_sum = 0.0
 
     current_ctrl = np.zeros(model.nu)
-    step = 0
     half_w = ARENA_WIDTH / 2.0
     half_h = ARENA_HEIGHT / 2.0
 
-    while data.time < duration:
+    # Fixed step count: an auto-reset rewinds data.time, so a time-based
+    # loop could run far longer than the requested duration.
+    n_steps = int(round(duration / model.opt.timestep))
+    n_samples = -(-n_steps // CONTROL_STEP_FREQ)  # control fires at 0, 20, ...
+    diverged = False
+
+    for step in range(n_steps):
         if step % CONTROL_STEP_FREQ == 0:
             # --- Read robot state ---
             pos = data.geom_xpos[core_geom_id]
@@ -296,6 +312,7 @@ def run_exploration(
             # --- Update visit grid ---
             grid.update(x, y)
             trajectory.append((x, y))
+            coverage_sum += grid.coverage_fraction()
 
             # --- Build NN inputs ---
             x_norm = x / half_w   # [-1, 1] within arena
@@ -325,10 +342,16 @@ def run_exploration(
             current_ctrl = net.forward(state)
 
         data.ctrl[:] = current_ctrl
+        t_before = data.time
         mujoco.mj_step(model, data)
-        step += 1
+        if data.time <= t_before:
+            # MuJoCo auto-reset on divergence rewinds the clock and teleports
+            # the robot back to the compiled spawn — stop scoring here.
+            diverged = True
+            break
 
-    return grid.coverage_fraction(), trajectory
+    coverage_integral = coverage_sum / max(n_samples, 1)
+    return coverage_integral, grid.coverage_fraction(), trajectory, diverged
 
 
 # =========================================================================== #
@@ -359,8 +382,13 @@ def _reset_to_spawn(data: mujoco.MjData, model: mujoco.MjModel, sx: float, sy: f
     mujoco.mj_forward(model, data)
 
 
-def _eval_worker(job: dict) -> float:
-    """Evaluate one candidate across multiple starting positions."""
+def _eval_worker(job: dict) -> tuple[float, float, int]:
+    """Evaluate one candidate across multiple starting positions.
+
+    Returns (fitness, avg_final_coverage, n_diverged): fitness is the negated
+    average coverage integral (nevergrad minimises); the average final
+    coverage and the count of diverged episodes are kept for logging only.
+    """
     assert _worker_ctx is not None
     model = _worker_ctx["model"]
     data = _worker_ctx["data"]
@@ -378,15 +406,21 @@ def _eval_worker(job: dict) -> float:
 
     fill_parameters(net, nn_weights)
 
-    total_coverage = 0.0
+    total_integral = 0.0
+    total_final = 0.0
+    n_diverged = 0
     for sx, sy in start_positions:
         _reset_to_spawn(data, model, sx, sy)
-        coverage, _ = run_exploration(model, data, core_id, net, f_slow, f_fast, duration)
-        total_coverage += coverage
+        cov_integral, final_cov, _, diverged = run_exploration(
+            model, data, core_id, net, f_slow, f_fast, duration)
+        total_integral += cov_integral
+        total_final += final_cov
+        n_diverged += int(diverged)
 
-    avg_coverage = total_coverage / len(start_positions)
-    # Nevergrad minimises → negate coverage
-    return -avg_coverage
+    avg_integral = total_integral / len(start_positions)
+    avg_final = total_final / len(start_positions)
+    # Nevergrad minimises → negate the coverage integral
+    return -avg_integral, avg_final, n_diverged
 
 
 # =========================================================================== #
@@ -443,6 +477,7 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
 
     best_fitness = float("inf")
     best_weights: np.ndarray | None = None
+    best_avg_final_coverage: float | None = None
     fitness_history: list[float] = []
     mean_history: list[float] = []
 
@@ -468,26 +503,36 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
                     for c in candidates
                 ]
 
-                fitnesses = list(pool.map(_eval_worker, jobs))
+                results = list(pool.map(_eval_worker, jobs))
+                fitnesses = [r[0] for r in results]
+                avg_final_covs = [r[1] for r in results]
+                n_diverged = sum(r[2] for r in results)
 
                 for c, f in zip(candidates, fitnesses):
                     optimizer.tell(c, f)
 
                 gen_best = min(fitnesses)
+                gen_best_idx = fitnesses.index(gen_best)
                 if gen_best < best_fitness:
                     best_fitness = gen_best
-                    best_idx = fitnesses.index(gen_best)
-                    best_weights = np.array(candidates[best_idx].value)
+                    best_weights = np.array(candidates[gen_best_idx].value)
+                    best_avg_final_coverage = avg_final_covs[gen_best_idx]
 
-                fitness_history.append(-gen_best)  # store as positive coverage
+                fitness_history.append(-gen_best)  # store as positive coverage integral
                 mean_history.append(-float(np.mean(fitnesses)))
                 progress.update(task, advance=1)
                 console.log(
                     f"Gen {gen + 1}/{args.budget} | "
-                    f"best_cov={-gen_best:.4f} | "
-                    f"gen_best={-min(fitnesses):.4f} | "
-                    f"gen_mean={-np.mean(fitnesses):.4f}"
+                    f"best_int={-best_fitness:.4f} | "
+                    f"gen_best_int={-gen_best:.4f} | "
+                    f"gen_mean_int={-np.mean(fitnesses):.4f} | "
+                    f"gen_best_avg_endcov={avg_final_covs[gen_best_idx]:.4f}"
                 )
+                if n_diverged:
+                    console.log(
+                        f"[yellow]Warning: {n_diverged} diverged episode(s) "
+                        f"in gen {gen + 1} (penalised in fitness)[/yellow]"
+                    )
 
     # Final recommendation
     rec = optimizer.provide_recommendation().value
@@ -501,7 +546,9 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
 
     # Summary
     summary = {
-        "best_coverage": -best_fitness,
+        "fitness_metric": "time_averaged_coverage_integral",
+        "best_coverage_integral": -best_fitness,
+        "best_avg_final_coverage": best_avg_final_coverage,
         "generations": args.budget,
         "pop_size": pop_size,
         "duration_s": args.dur,
@@ -517,15 +564,20 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     ax.plot(generations, fitness_history, label="Best (gen)")
     ax.plot(generations, mean_history, color="red", alpha=0.7, label="Mean (gen)")
     ax.set_xlabel("Generation")
-    ax.set_ylabel("Coverage Fraction")
-    ax.set_title("Coverage over Generations")
+    ax.set_ylabel("Coverage Integral (time-averaged)")
+    ax.set_title("Coverage Integral over Generations")
     ax.legend()
     ax.grid(True)
     fig.tight_layout()
     fig.savefig(run_dir / "fitness_history.png", dpi=150)
     plt.close(fig)
 
-    console.log(f"Best coverage: {-best_fitness:.4f}")
+    console.log(f"Best coverage integral: {-best_fitness:.4f}")
+    if best_avg_final_coverage is not None:
+        console.log(
+            f"Avg final coverage of best candidate (over starts): "
+            f"{best_avg_final_coverage:.4f}"
+        )
     console.log(f"Run saved to: {run_dir}")
 
     return best_weights, run_dir
@@ -566,9 +618,11 @@ def run_replay(replay_dir: Path, duration: float) -> None:
     half_h = ARENA_HEIGHT / 2.0
     current_ctrl = np.zeros(model.nu)
     step = 0
+    coverage_sum = 0.0
+    n_cov_samples = 0
 
     def control_callback(_m: mujoco.MjModel, d: mujoco.MjData) -> None:
-        nonlocal current_ctrl, step
+        nonlocal current_ctrl, step, coverage_sum, n_cov_samples
         if step % CONTROL_STEP_FREQ == 0:
             pos = d.geom_xpos[core_id]
             x, y = float(pos[0]), float(pos[1])
@@ -577,6 +631,8 @@ def run_replay(replay_dir: Path, duration: float) -> None:
 
             grid.update(x, y)
             trajectory.append((x, y))
+            coverage_sum += grid.coverage_fraction()
+            n_cov_samples += 1
 
             x_norm = x / half_w
             y_norm = y / half_h
@@ -610,7 +666,9 @@ def run_replay(replay_dir: Path, duration: float) -> None:
 
     # Post-replay analysis
     cov = grid.coverage_fraction()
-    console.log(f"Coverage at end of replay: {cov:.4f} ({cov * 100:.1f}%)")
+    cov_integral = coverage_sum / max(n_cov_samples, 1)
+    console.log(f"Final coverage at end of replay: {cov:.4f} ({cov * 100:.1f}%)")
+    console.log(f"Coverage integral (time-averaged over replay): {cov_integral:.4f}")
 
     if trajectory:
         pos_data = np.array(trajectory)
