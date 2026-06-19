@@ -275,10 +275,11 @@ def run_exploration(
     f_slow: float,
     f_fast: float,
     duration: float,
-) -> tuple[float, float, list[tuple[float, float]], bool]:
+) -> tuple[float, float, list[tuple[float, float]], list[tuple[float, float]], bool]:
     """Simulate one evaluation.
 
-    Returns (coverage_integral, final_coverage, xy_trajectory, diverged).
+    Returns (coverage_integral, final_coverage, xy_trajectory, coverage_curve,
+    diverged).
     coverage_integral is the coverage fraction time-averaged over the full
     requested duration (in [0, 1]): reaching the same final coverage earlier
     scores higher.
@@ -289,6 +290,7 @@ def run_exploration(
     """
     grid = ExplorationGrid()
     trajectory: list[tuple[float, float]] = []
+    coverage_curve: list[tuple[float, float]] = []
     coverage_sum = 0.0
 
     current_ctrl = np.zeros(model.nu)
@@ -312,7 +314,9 @@ def run_exploration(
             # --- Update visit grid ---
             grid.update(x, y)
             trajectory.append((x, y))
-            coverage_sum += grid.coverage_fraction()
+            cov_now = grid.coverage_fraction()
+            coverage_sum += cov_now
+            coverage_curve.append((float(data.time), cov_now))
 
             # --- Build NN inputs ---
             x_norm = x / half_w   # [-1, 1] within arena
@@ -351,7 +355,7 @@ def run_exploration(
             break
 
     coverage_integral = coverage_sum / max(n_samples, 1)
-    return coverage_integral, grid.coverage_fraction(), trajectory, diverged
+    return coverage_integral, grid.coverage_fraction(), trajectory, coverage_curve, diverged
 
 
 # =========================================================================== #
@@ -411,7 +415,7 @@ def _eval_worker(job: dict) -> tuple[float, float, int]:
     n_diverged = 0
     for sx, sy in start_positions:
         _reset_to_spawn(data, model, sx, sy)
-        cov_integral, final_cov, _, diverged = run_exploration(
+        cov_integral, final_cov, _, _, diverged = run_exploration(
             model, data, core_id, net, f_slow, f_fast, duration)
         total_integral += cov_integral
         total_final += final_cov
@@ -544,6 +548,17 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     np.save(run_dir / "fitness_history.npy", np.array(fitness_history))
     np.save(run_dir / "mean_history.npy", np.array(mean_history))
 
+    # Post-evolution evaluation: save coverage-over-time curve from (0, 0)
+    nn_w = best_weights[:n_nn_params]
+    f_s = float(np.clip(np.abs(best_weights[n_nn_params]), 0.1, 5.0))
+    f_f = float(np.clip(np.abs(best_weights[n_nn_params + 1]), 0.1, 10.0))
+    eval_model, eval_data, eval_core = _build_world(spawn_xy=(0.0, 0.0))
+    eval_net = ExplorationNetwork()
+    fill_parameters(eval_net, nn_w)
+    _, _, _, curve, _ = run_exploration(
+        eval_model, eval_data, eval_core, eval_net, f_s, f_f, args.dur)
+    np.save(run_dir / "coverage_curve.npy", np.array(curve))
+
     # Summary
     summary = {
         "fitness_metric": "time_averaged_coverage_integral",
@@ -553,6 +568,7 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
         "pop_size": pop_size,
         "duration_s": args.dur,
         "n_params": n_total,
+        "seed": args.seed,
         "f_slow": float(np.clip(np.abs(best_weights[n_nn_params]), 0.1, 5.0)),
         "f_fast": float(np.clip(np.abs(best_weights[n_nn_params + 1]), 0.1, 10.0)),
     }
@@ -620,6 +636,7 @@ def run_replay(replay_dir: Path, duration: float) -> None:
     step = 0
     coverage_sum = 0.0
     n_cov_samples = 0
+    coverage_curve: list[tuple[float, float]] = []
 
     def control_callback(_m: mujoco.MjModel, d: mujoco.MjData) -> None:
         nonlocal current_ctrl, step, coverage_sum, n_cov_samples
@@ -631,8 +648,10 @@ def run_replay(replay_dir: Path, duration: float) -> None:
 
             grid.update(x, y)
             trajectory.append((x, y))
-            coverage_sum += grid.coverage_fraction()
+            cov_now = grid.coverage_fraction()
+            coverage_sum += cov_now
             n_cov_samples += 1
+            coverage_curve.append((float(d.time), cov_now))
 
             x_norm = x / half_w
             y_norm = y / half_h
@@ -670,11 +689,19 @@ def run_replay(replay_dir: Path, duration: float) -> None:
     console.log(f"Final coverage at end of replay: {cov:.4f} ({cov * 100:.1f}%)")
     console.log(f"Coverage integral (time-averaged over replay): {cov_integral:.4f}")
 
+    # Save coverage curve to the run directory
+    if coverage_curve:
+        np.save(replay_dir / "coverage_curve_replay.npy", np.array(coverage_curve))
+        console.log(f"Coverage curve saved to: {replay_dir / 'coverage_curve_replay.npy'}")
+
     if trajectory:
         pos_data = np.array(trajectory)
-        fig, (ax1, ax2) = plt.subplots(1, 2, figsize=(14, 6))
+        curve_data = np.array(coverage_curve) if coverage_curve else None
+        n_plots = 3 if curve_data is not None else 2
+        fig, axes = plt.subplots(1, n_plots, figsize=(7 * n_plots, 6))
 
         # Trajectory plot
+        ax1 = axes[0]
         ax1.plot(pos_data[:, 0], pos_data[:, 1], "b-", linewidth=0.5)
         ax1.plot(pos_data[0, 0], pos_data[0, 1], "go", markersize=8, label="Start")
         ax1.plot(pos_data[-1, 0], pos_data[-1, 1], "ro", markersize=8, label="End")
@@ -693,6 +720,7 @@ def run_replay(replay_dir: Path, duration: float) -> None:
         ax1.grid(True)
 
         # Heatmap of visit counts
+        ax2 = axes[1]
         inner = grid.inner_grid()
         im = ax2.imshow(
             inner, origin="lower", cmap="YlOrRd", interpolation="nearest",
@@ -703,6 +731,27 @@ def run_replay(replay_dir: Path, duration: float) -> None:
         ax2.set_title(f"Visit Heatmap — {cov * 100:.1f}% coverage")
         ax2.set_aspect("equal")
         fig.colorbar(im, ax=ax2, label="Visits")
+
+        # Coverage over time
+        if curve_data is not None:
+            ax3 = axes[2]
+            ax3.plot(curve_data[:, 0], curve_data[:, 1] * 100, "b-", linewidth=1)
+            for thresh in [50, 80]:
+                ax3.axhline(thresh, color="gray", linestyle="--", linewidth=0.8)
+                hits = curve_data[curve_data[:, 1] * 100 >= thresh]
+                if len(hits) > 0:
+                    t_hit = hits[0, 0]
+                    ax3.axvline(t_hit, color="red", linestyle=":", linewidth=0.8)
+                    ax3.annotate(
+                        f"{thresh}% @ {t_hit:.0f}s",
+                        xy=(t_hit, thresh), xytext=(10, 5),
+                        textcoords="offset points", fontsize=8,
+                    )
+            ax3.set_xlabel("Time (s)")
+            ax3.set_ylabel("Coverage (%)")
+            ax3.set_title("Coverage over Time")
+            ax3.set_ylim(0, 105)
+            ax3.grid(True)
 
         fig.tight_layout()
         plt.show()
