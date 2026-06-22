@@ -386,12 +386,14 @@ def _reset_to_spawn(data: mujoco.MjData, model: mujoco.MjModel, sx: float, sy: f
     mujoco.mj_forward(model, data)
 
 
-def _eval_worker(job: dict) -> tuple[float, float, int]:
+def _eval_worker(job: dict) -> tuple[float, float, float, int]:
     """Evaluate one candidate across multiple starting positions.
 
-    Returns (fitness, avg_final_coverage, n_diverged): fitness is the negated
-    average coverage integral (nevergrad minimises); the average final
-    coverage and the count of diverged episodes are kept for logging only.
+    Returns (fitness, avg_coverage_integral, avg_final_coverage, n_diverged).
+    fitness is negated for nevergrad (which minimises): the negated coverage
+    integral when job["fitness"] == "integral", otherwise the negated final
+    coverage fraction.  Both coverage metrics are always computed and returned
+    so either can be logged regardless of which one is optimized.
     """
     assert _worker_ctx is not None
     model = _worker_ctx["model"]
@@ -402,6 +404,7 @@ def _eval_worker(job: dict) -> tuple[float, float, int]:
     weights = np.asarray(job["weights"], dtype=np.float64)
     duration = float(job["duration"])
     start_positions: list[tuple[float, float]] = job["start_positions"]
+    fitness_metric = job.get("fitness", "integral")
 
     n_nn_params = job["n_nn_params"]
     nn_weights = weights[:n_nn_params]
@@ -423,8 +426,10 @@ def _eval_worker(job: dict) -> tuple[float, float, int]:
 
     avg_integral = total_integral / len(start_positions)
     avg_final = total_final / len(start_positions)
-    # Nevergrad minimises → negate the coverage integral
-    return -avg_integral, avg_final, n_diverged
+    # Nevergrad minimises → negate the chosen objective. The other metric is
+    # still returned for logging/comparison.
+    optimized = avg_integral if fitness_metric == "integral" else avg_final
+    return -optimized, avg_integral, avg_final, n_diverged
 
 
 # =========================================================================== #
@@ -479,9 +484,14 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     }
     (run_dir / "config.json").write_text(json.dumps(config, indent=2))
 
+    optimized_label = (
+        "coverage integral" if args.fitness == "integral" else "final coverage"
+    )
+
     best_fitness = float("inf")
     best_weights: np.ndarray | None = None
-    best_avg_final_coverage: float | None = None
+    best_integral: float | None = None
+    best_final: float | None = None
     fitness_history: list[float] = []
     mean_history: list[float] = []
 
@@ -503,14 +513,16 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
                         "duration": args.dur,
                         "start_positions": starts,
                         "n_nn_params": n_nn_params,
+                        "fitness": args.fitness,
                     }
                     for c in candidates
                 ]
 
                 results = list(pool.map(_eval_worker, jobs))
                 fitnesses = [r[0] for r in results]
-                avg_final_covs = [r[1] for r in results]
-                n_diverged = sum(r[2] for r in results)
+                avg_integrals = [r[1] for r in results]
+                avg_finals = [r[2] for r in results]
+                n_diverged = sum(r[3] for r in results)
 
                 for c, f in zip(candidates, fitnesses):
                     optimizer.tell(c, f)
@@ -520,22 +532,22 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
                 if gen_best < best_fitness:
                     best_fitness = gen_best
                     best_weights = np.array(candidates[gen_best_idx].value)
-                    best_avg_final_coverage = avg_final_covs[gen_best_idx]
+                    best_integral = avg_integrals[gen_best_idx]
+                    best_final = avg_finals[gen_best_idx]
 
-                fitness_history.append(-gen_best)  # store as positive coverage integral
+                fitness_history.append(-gen_best)  # positive optimized objective
                 mean_history.append(-float(np.mean(fitnesses)))
                 progress.update(task, advance=1)
                 console.log(
                     f"Gen {gen + 1}/{args.budget} | "
-                    f"best_int={-best_fitness:.4f} | "
-                    f"gen_best_int={-gen_best:.4f} | "
-                    f"gen_mean_int={-np.mean(fitnesses):.4f} | "
-                    f"gen_best_avg_endcov={avg_final_covs[gen_best_idx]:.4f}"
+                    f"best={-best_fitness:.4f} ({args.fitness}) | "
+                    f"gen_int={avg_integrals[gen_best_idx]:.4f} | "
+                    f"gen_endcov={avg_finals[gen_best_idx]:.4f}"
                 )
                 if n_diverged:
                     console.log(
                         f"[yellow]Warning: {n_diverged} diverged episode(s) "
-                        f"in gen {gen + 1} (penalised in fitness)[/yellow]"
+                        f"in gen {gen + 1}[/yellow]"
                     )
 
     # Final recommendation
@@ -560,10 +572,14 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     np.save(run_dir / "coverage_curve.npy", np.array(curve))
 
     # Summary
+    fitness_metric_name = (
+        "time_averaged_coverage_integral" if args.fitness == "integral"
+        else "final_coverage_fraction"
+    )
     summary = {
-        "fitness_metric": "time_averaged_coverage_integral",
-        "best_coverage_integral": -best_fitness,
-        "best_avg_final_coverage": best_avg_final_coverage,
+        "fitness_metric": fitness_metric_name,
+        "best_coverage_integral": best_integral,
+        "best_final_coverage": best_final,
         "generations": args.budget,
         "pop_size": pop_size,
         "duration_s": args.dur,
@@ -580,19 +596,23 @@ def evolve(args: argparse.Namespace) -> tuple[np.ndarray, Path]:
     ax.plot(generations, fitness_history, label="Best (gen)")
     ax.plot(generations, mean_history, color="red", alpha=0.7, label="Mean (gen)")
     ax.set_xlabel("Generation")
-    ax.set_ylabel("Coverage Integral (time-averaged)")
-    ax.set_title("Coverage Integral over Generations")
+    if args.fitness == "integral":
+        ax.set_ylabel("Coverage Integral (time-averaged)")
+        ax.set_title("Coverage Integral over Generations")
+    else:
+        ax.set_ylabel("Final Coverage Fraction")
+        ax.set_title("Final Coverage over Generations")
     ax.legend()
     ax.grid(True)
     fig.tight_layout()
     fig.savefig(run_dir / "fitness_history.png", dpi=150)
     plt.close(fig)
 
-    console.log(f"Best coverage integral: {-best_fitness:.4f}")
-    if best_avg_final_coverage is not None:
+    console.log(f"Best {optimized_label}: {-best_fitness:.4f}")
+    if best_integral is not None and best_final is not None:
         console.log(
-            f"Avg final coverage of best candidate (over starts): "
-            f"{best_avg_final_coverage:.4f}"
+            f"Best candidate — coverage integral: {best_integral:.4f}, "
+            f"final coverage: {best_final:.4f}"
         )
     console.log(f"Run saved to: {run_dir}")
 
@@ -768,6 +788,10 @@ def main() -> None:
                         help="Parallel worker processes")
     parser.add_argument("--dur", type=float, default=DURATION,
                         help="Simulation duration per evaluation (seconds)")
+    parser.add_argument("--fitness", type=str, default="integral",
+                        choices=["integral", "fraction"],
+                        help="Optimization target: 'integral' (time-averaged "
+                             "coverage) or 'fraction' (final coverage)")
     parser.add_argument("--seed", type=int, default=42)
     parser.add_argument("--run-name", type=str, default=None)
     parser.add_argument("--replay", type=str, default=None,
