@@ -1,6 +1,7 @@
+
 # Evolving Neural Network Controllers for Autonomous Robot Exploration
 
-MSc thesis project — Vrije Universiteit Amsterdam, 2026.
+BSc thesis project — Vrije Universiteit Amsterdam, 2026.
 
 This repository extends the [ARIEL](https://github.com/ci-group/ariel) framework to evolve a feedforward neural network controller for autonomous spatial exploration of a simulated gecko robot in MuJoCo.
 
