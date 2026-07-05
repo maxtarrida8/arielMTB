@@ -1,13 +1,16 @@
-"""
-Run
----
-uv run examples/thesisMTB/gecko_experiments/NNexp.py \\
-    --budget 200 --workers 8 --dur 1200
+"""Evolve a feedforward neural network controller for autonomous gecko exploration.
 
-Replay
-------
-uv run examples/thesisMTB/gecko_experiments/NNexp.py \\
-    --replay __data__/NNexp/runs/<run_id>
+CMA-ES optimises 410 parameters (408 NN weights + 2 gait clock frequencies) to
+maximise grid coverage on a 10x10 m flat arena. Two fitness functions are
+supported: coverage fraction (f1) and coverage integral (f_int).
+
+Usage
+-----
+    uv run examples/thesisMTB/gecko_experiments/NNexp.py \\
+        --budget 1000 --dur 1200 --fitness integral --seed 42
+
+    uv run examples/thesisMTB/gecko_experiments/NNexp.py \\
+        --replay __data__/NNexp/runs/<run_directory>
 """
 
 from __future__ import annotations

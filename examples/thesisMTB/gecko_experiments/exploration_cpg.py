@@ -38,8 +38,7 @@ from ariel.body_phenotypes.robogen_lite.prebuilt_robots.gecko import gecko
 from ariel.simulation.controllers import NaCPG
 from ariel.simulation.controllers.controller import Controller
 from ariel.simulation.controllers.na_cpg import create_fully_connected_adjacency
-from ariel.simulation.environments import SimpleFlatWorldWalled
-from ariel.simulation.environments import SimpleFlatWorldWalledWithTargets
+from ariel.simulation.environments import SimpleFlatWorld
 from ariel.simulation.tasks.exploration import (
     visit_counts_from_xy,
 )
@@ -81,9 +80,9 @@ TARGETS: list[tuple[float, float]] = [
 # ---------------------------------------------------------------------------
 # World / model helpers
 # ---------------------------------------------------------------------------
-def _build_world() -> tuple[SimpleFlatWorldWalledWithTargets, mujoco.MjModel, mujoco.MjData]:
+def _build_world() -> tuple[SimpleFlatWorld, mujoco.MjModel, mujoco.MjData]:
     mujoco.set_mjcb_control(None)
-    world = SimpleFlatWorldWalledWithTargets(load_precompiled=False, targets_xy=TARGETS)
+    world = SimpleFlatWorld(load_precompiled=False, targets_xy=TARGETS)
     world.spawn(gecko().spec, position=[0.0, 0.0, 0.1])
     model = cast(mujoco.MjModel, world.spec.compile())
     data = mujoco.MjData(model)

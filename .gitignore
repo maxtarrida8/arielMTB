@@ -11,6 +11,16 @@ ariel_header.svg
 # Docs
 docs/apidocs/
 docs/autoapi
+# Thesis drafts
+*.docx
+~$*
+*.tex
+# Tooling
+.claude/
+# Separate projects
+robohat/
+# Generated figures
+figures/
 ### PYTHON ######################################################################
 # Byte-compiled / optimized / DLL files
 __pycache__/
