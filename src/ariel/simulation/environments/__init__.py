@@ -21,12 +21,6 @@ from ariel.simulation.environments._rugged_tilted import (
 from ariel.simulation.environments._simple_flat import (
     SimpleFlatWorld,
 )
-from ariel.simulation.environments._simple_flat_walled import (
-    SimpleFlatWorldWalled,
-)
-from ariel.simulation.environments._simple_flat_walled_with_targets import (
-    SimpleFlatWorldWalledWithTargets,
-)
 from ariel.simulation.environments._simple_tilted import (
     SimpleTiltedWorld,
 )
@@ -43,7 +37,5 @@ __all__ = [
     "RuggedTerrainWorld",
     "RuggedTiltedWorld",
     "SimpleFlatWorld",
-    "SimpleFlatWorldWalled",
-    "SimpleFlatWorldWalledWithTargets",
     "SimpleTiltedWorld",
 ]

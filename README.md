@@ -33,7 +33,6 @@ examples/thesisMTB/
   gecko_experiments/NNexp.py        Neural network experiment (main)
   gecko_experiments/exploration_cpg.py  CPG baseline experiment
   plot_results.py                   Thesis figure generation
-  backfill_curves.py                Coverage curve recovery utility
 ```
 
 ## Installation

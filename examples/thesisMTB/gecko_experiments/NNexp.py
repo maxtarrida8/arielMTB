@@ -719,9 +719,7 @@ def run_replay(replay_dir: Path, duration: float) -> None:
 
     if trajectory:
         pos_data = np.array(trajectory)
-        curve_data = np.array(coverage_curve) if coverage_curve else None
-        n_plots = 3 if curve_data is not None else 2
-        fig, axes = plt.subplots(1, n_plots, figsize=(7 * n_plots, 6))
+        fig, axes = plt.subplots(1, 2, figsize=(14, 6))
 
         # Trajectory plot
         ax1 = axes[0]
@@ -754,27 +752,6 @@ def run_replay(replay_dir: Path, duration: float) -> None:
         ax2.set_title(f"Visit Heatmap — {cov * 100:.1f}% coverage")
         ax2.set_aspect("equal")
         fig.colorbar(im, ax=ax2, label="Visits")
-
-        # Coverage over time
-        if curve_data is not None:
-            ax3 = axes[2]
-            ax3.plot(curve_data[:, 0], curve_data[:, 1] * 100, "b-", linewidth=1)
-            for thresh in [50, 80]:
-                ax3.axhline(thresh, color="gray", linestyle="--", linewidth=0.8)
-                hits = curve_data[curve_data[:, 1] * 100 >= thresh]
-                if len(hits) > 0:
-                    t_hit = hits[0, 0]
-                    ax3.axvline(t_hit, color="red", linestyle=":", linewidth=0.8)
-                    ax3.annotate(
-                        f"{thresh}% @ {t_hit:.0f}s",
-                        xy=(t_hit, thresh), xytext=(10, 5),
-                        textcoords="offset points", fontsize=8,
-                    )
-            ax3.set_xlabel("Time (s)")
-            ax3.set_ylabel("Coverage (%)")
-            ax3.set_title("Coverage over Time")
-            ax3.set_ylim(0, 105)
-            ax3.grid(True)
 
         fig.tight_layout()
         plt.show()

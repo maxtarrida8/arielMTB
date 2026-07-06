@@ -80,17 +80,12 @@ def _load_runs(condition_dir: Path) -> list[dict]:
 
         seed = summary.get("seed", config.get("args", {}).get("seed", -1))
 
-        if coverage_curve is not None and len(coverage_curve) > 0:
-            best_final = float(coverage_curve[-1, 1])
-            best_integral = float(np.trapezoid(coverage_curve[:, 1], coverage_curve[:, 0])
-                                  / coverage_curve[-1, 0])
-        else:
-            best_integral = summary.get("best_coverage_integral")
-            best_final = summary.get(
-                "best_final_coverage",
-                summary.get("best_avg_final_coverage",
-                            summary.get("best_coverage")),
-            )
+        best_integral = summary.get("best_coverage_integral")
+        best_final = summary.get(
+            "best_final_coverage",
+            summary.get("best_avg_final_coverage",
+                        summary.get("best_coverage")),
+        )
 
         runs.append({
             "seed": seed,
@@ -388,9 +383,9 @@ def print_summary_table(data: dict) -> None:
             finals = [r["best_final_coverage"] for r in runs
                       if r.get("best_final_coverage") is not None]
             n = len(runs)
-            int_str = (f"{np.mean(integrals):.3f} ± {np.std(integrals):.3f}"
+            int_str = (f"{np.mean(integrals):.3f} ± {np.std(integrals, ddof=1):.3f}"
                        if integrals else "—")
-            fin_str = (f"{np.mean(finals):.3f} ± {np.std(finals):.3f}"
+            fin_str = (f"{np.mean(finals):.3f} ± {np.std(finals, ddof=1):.3f}"
                        if finals else "—")
             print(f"{label:<20} {n:>6} {int_str:>16} {fin_str:>14}")
     print()
